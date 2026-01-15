@@ -7,17 +7,17 @@ const path = require('path');
 require('dotenv').config();
 
 const app = express();
-// Hostinger uses a dynamic PORT environment variable
 const port = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// Serve static files from the root directory
-app.use(express.static(path.join(__dirname, '.')));
+// Hostinger build output is now in the 'public' folder
+const publicPath = path.join(__dirname, 'public');
+app.use(express.static(publicPath));
 
-// Database Configuration using environment variables
+// Database Configuration
 const dbConfig = {
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER,
@@ -37,7 +37,7 @@ async function getConn() {
     }
 }
 
-// API Route for all CRM actions
+// API Route
 app.post('/api', async (req, res) => {
     const { action } = req.body;
     let conn;
@@ -139,9 +139,9 @@ app.post('/api', async (req, res) => {
     }
 });
 
-// For all other routes, serve index.html
+// All non-API requests serve the index.html from the public folder
 app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+    res.sendFile(path.join(publicPath, 'index.html'));
 });
 
 app.listen(port, () => {
