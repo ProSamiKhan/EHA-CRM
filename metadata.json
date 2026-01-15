@@ -1,0 +1,7 @@
+{
+  "name": "English House Academy CRM",
+  "description": "A production-ready Full Stack Admission Management CRM with role-based access, batch tracking, payment history, and advanced analytics.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
