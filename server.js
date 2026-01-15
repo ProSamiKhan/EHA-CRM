@@ -9,18 +9,18 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-// 1. Basic Configuration & Middleware
+// 1. Basic Middleware
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// 2. Logging Middleware (Useful for Hostinger console logs)
+// Logging
 app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
     next();
 });
 
-// 3. Database Connection Pool
+// 2. Database Connection
 const dbConfig = {
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER,
@@ -35,32 +35,32 @@ const dbConfig = {
 
 const pool = mysql.createPool(dbConfig);
 
-// 4. API ROUTES (Must come BEFORE static files)
+// 3. API Router
+const apiRouter = express.Router();
 
-// Diagnostic check: GET /admission-api
-app.get(['/admission-api', '/admission-api/'], async (req, res) => {
-    try {
-        const conn = await pool.getConnection();
-        const [users] = await conn.execute('SELECT COUNT(*) as count FROM users');
-        conn.release();
-        res.json({ 
-            status: 'online', 
-            database: 'connected', 
-            userCount: users[0].count,
-            timestamp: new Date().toISOString()
-        });
-    } catch (err) {
-        res.status(500).json({ 
-            status: 'online', 
-            database: 'error', 
-            error: err.message,
-            config_check: { host: !!dbConfig.host, user: !!dbConfig.user, db: !!dbConfig.database }
-        });
+// Health check / Status
+apiRouter.all('/', async (req, res) => {
+    if (req.method === 'GET') {
+        try {
+            const conn = await pool.getConnection();
+            const [users] = await conn.execute('SELECT COUNT(*) as count FROM users');
+            conn.release();
+            return res.json({ 
+                status: 'online', 
+                database: 'connected', 
+                count: users[0].count,
+                timestamp: new Date().toISOString()
+            });
+        } catch (err) {
+            return res.status(500).json({ 
+                status: 'online', 
+                database: 'error', 
+                message: err.message 
+            });
+        }
     }
-});
-
-// Main API Handler: POST /admission-api
-app.post(['/admission-api', '/admission-api/'], async (req, res) => {
+    
+    // POST Handler for actions
     const { action } = req.body;
     if (!action) return res.status(400).json({ error: 'Missing action' });
 
@@ -152,67 +152,51 @@ app.post(['/admission-api', '/admission-api/'], async (req, res) => {
                 res.status(400).json({ error: `Action '${action}' not supported` });
         }
     } catch (err) {
-        console.error('API Server Error:', err);
+        console.error('API Error:', err);
         res.status(500).json({ error: 'Internal Server Error', message: err.message });
     }
 });
 
-// 5. STATIC FILES (Frontend)
+// Mount the API Router
+app.use('/admission-api', apiRouter);
+
+// 4. Static File Serving
 const distPath = path.join(__dirname, 'dist');
 if (fs.existsSync(distPath)) {
-    console.log(`Serving static files from ${distPath}`);
     app.use(express.static(distPath));
-    // SPA fallback
+    // SPA Fallback
     app.get('*', (req, res) => {
-        // If it looks like an API call but isn't handled yet, it's a 404
-        if (req.originalUrl.startsWith('/admission-api')) {
-            return res.status(404).json({ error: 'Endpoint not found' });
-        }
+        if (req.originalUrl.startsWith('/admission-api')) return res.status(404).json({ error: 'API route not found' });
         res.sendFile(path.join(distPath, 'index.html'));
     });
 } else {
-    // Basic root handler if dist is missing
-    app.get('/', (req, res) => res.send(`
-        <html><body style="font-family:sans-serif; text-align:center; padding:50px;">
-            <h1>EHA CRM Backend is Active</h1>
-            <p>Port: ${port}</p>
-            <p>API Endpoint: <a href="/admission-api">/admission-api</a></p>
-            <hr>
-            <p style="color:red;">Frontend build folder (dist) not found. Run 'npm run build' locally then upload.</p>
-        </body></html>
-    `));
+    app.get('/', (req, res) => {
+        res.status(200).send('Backend is running, but frontend "dist" folder is missing. Run "npm run build" to generate it.');
+    });
 }
 
-// 6. DB INITIALIZATION
+// 5. DB Initialization
 async function dbInit() {
-    console.log('--- DATABASE SEEDER STARTING ---');
     try {
         const schemaPath = path.join(__dirname, 'schema.sql');
-        if (!fs.existsSync(schemaPath)) {
-            console.log('No schema.sql found, skipping seeder.');
-            return;
-        }
+        if (!fs.existsSync(schemaPath)) return;
         const schemaSql = fs.readFileSync(schemaPath, 'utf8');
         const statements = schemaSql.split(/;\s*$/m).map(s => s.trim()).filter(s => s.length > 0 && !s.startsWith('--'));
         const conn = await pool.getConnection();
         for (let statement of statements) {
-            try { 
-                await conn.query(statement); 
-            } catch (e) {
-                if (!e.message.includes('already exists') && !e.message.includes('Duplicate entry')) {
-                    console.error('Seeder Error on statement:', statement.substring(0, 50), '...', e.message);
-                }
+            try { await conn.query(statement); } catch (e) {
+                if (!e.message.includes('already exists') && !e.message.includes('Duplicate entry')) console.error(e.message);
             }
         }
         conn.release();
-        console.log('--- DATABASE SEEDER FINISHED ---');
+        console.log('Database initialized successfully.');
     } catch (err) {
-        console.error('--- DATABASE SEEDER FAILED ---', err.message);
+        console.error('Database initialization failed:', err.message);
     }
 }
 
-// 7. BOOTSTRAP
+// 6. Start
 app.listen(port, () => {
-    console.log(`Express server successfully running on port ${port}`);
-    dbInit().catch(console.error);
+    console.log(`Server listening on port ${port}`);
+    dbInit();
 });

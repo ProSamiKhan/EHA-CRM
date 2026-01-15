@@ -1,7 +1,7 @@
 
 import { Candidate, Batch, User, UserRole, AuditLog } from '../types';
 
-// Using relative URL to handle proxying correctly on Hostinger
+// Using absolute path for clarity in production routing
 const API_URL = '/admission-api';
 
 async function fetchApi(action: string, method: 'GET' | 'POST' = 'POST', body?: any) {
@@ -13,10 +13,25 @@ async function fetchApi(action: string, method: 'GET' | 'POST' = 'POST', body?: 
     };
     
     const response = await fetch(API_URL, options);
+    
     if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || `Server error: ${response.status}`);
+        // Try to get JSON error first
+        const text = await response.text();
+        let errorMessage = `Server error: ${response.status}`;
+        try {
+            const json = JSON.parse(text);
+            errorMessage = json.error || json.message || errorMessage;
+        } catch (e) {
+            // If not JSON, it might be a LiteSpeed/Apache 404 page
+            if (text.includes('Page Not Found') || text.includes('Does Not Exist')) {
+                errorMessage = "LiteSpeed 404: The server failed to route this request to the Node.js app. Check .htaccess or app startup file.";
+            } else {
+                errorMessage = text.substring(0, 100);
+            }
+        }
+        throw new Error(errorMessage);
     }
+    
     return await response.json();
   } catch (error) {
     console.error(`API Error (${action}):`, error);
@@ -26,7 +41,7 @@ async function fetchApi(action: string, method: 'GET' | 'POST' = 'POST', body?: 
 
 export class StorageService {
   static async init() {
-    console.log("Storage service initialized with endpoint:", API_URL);
+    console.log("Storage service initialized. Target:", API_URL);
   }
 
   static async getUsers(): Promise<User[]> {
