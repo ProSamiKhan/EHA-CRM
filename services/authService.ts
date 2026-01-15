@@ -4,7 +4,7 @@ import { User } from '../types';
 export class AuthService {
   static async login(username: string, password: string): Promise<User | null> {
     try {
-      const response = await fetch('/api-server', {
+      const response = await fetch('/admission-api', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'login', username, password })
@@ -17,11 +17,10 @@ export class AuthService {
           return data.user;
         }
       } else if (response.status === 401) {
-        console.warn("Authentication failed: Invalid credentials");
         throw new Error("Invalid username or password");
       } else {
         const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || `Server returned ${response.status}`);
+        throw new Error(errData.message || errData.error || `Server error: ${response.status}`);
       }
       
       return null;
