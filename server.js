@@ -9,18 +9,18 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-// 1. Basic Middleware
+// 1. Basic Configuration & Middleware
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// 2. Request Logger (Check Hostinger logs to see these)
+// 2. Logging Middleware (Useful for Hostinger console logs)
 app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
     next();
 });
 
-// 3. Database Pool
+// 3. Database Connection Pool
 const dbConfig = {
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER,
@@ -35,11 +35,10 @@ const dbConfig = {
 
 const pool = mysql.createPool(dbConfig);
 
-// 4. API Router (Define this BEFORE static files to prevent 404s)
-const apiRouter = express.Router();
+// 4. API ROUTES (Must come BEFORE static files)
 
-// Diagnostic Health Check
-apiRouter.get('/', async (req, res) => {
+// Diagnostic check: GET /admission-api
+app.get(['/admission-api', '/admission-api/'], async (req, res) => {
     try {
         const conn = await pool.getConnection();
         const [users] = await conn.execute('SELECT COUNT(*) as count FROM users');
@@ -48,20 +47,20 @@ apiRouter.get('/', async (req, res) => {
             status: 'online', 
             database: 'connected', 
             userCount: users[0].count,
-            config: { host: dbConfig.host, user: dbConfig.user, db: dbConfig.database }
+            timestamp: new Date().toISOString()
         });
     } catch (err) {
         res.status(500).json({ 
             status: 'online', 
             database: 'error', 
             error: err.message,
-            code: err.code 
+            config_check: { host: !!dbConfig.host, user: !!dbConfig.user, db: !!dbConfig.database }
         });
     }
 });
 
-// Main POST handler
-apiRouter.post('/', async (req, res) => {
+// Main API Handler: POST /admission-api
+app.post(['/admission-api', '/admission-api/'], async (req, res) => {
     const { action } = req.body;
     if (!action) return res.status(400).json({ error: 'Missing action' });
 
@@ -150,44 +149,59 @@ apiRouter.post('/', async (req, res) => {
                 break;
 
             default:
-                res.status(400).json({ error: 'Invalid action' });
+                res.status(400).json({ error: `Action '${action}' not supported` });
         }
     } catch (err) {
-        console.error('API Error:', err);
+        console.error('API Server Error:', err);
         res.status(500).json({ error: 'Internal Server Error', message: err.message });
     }
 });
 
-// Mount the router
-app.use('/admission-api', apiRouter);
-
-// 5. Static Files & Catch-all (Must be after API routes)
+// 5. STATIC FILES (Frontend)
 const distPath = path.join(__dirname, 'dist');
 if (fs.existsSync(distPath)) {
+    console.log(`Serving static files from ${distPath}`);
     app.use(express.static(distPath));
+    // SPA fallback
     app.get('*', (req, res) => {
-        // If it looks like an API call but reached here, it's a 404
-        if (req.url.startsWith('/admission-api')) {
-            return res.status(404).json({ error: 'API route not found' });
+        // If it looks like an API call but isn't handled yet, it's a 404
+        if (req.originalUrl.startsWith('/admission-api')) {
+            return res.status(404).json({ error: 'Endpoint not found' });
         }
         res.sendFile(path.join(distPath, 'index.html'));
     });
 } else {
-    app.get('/', (req, res) => res.send('Backend is running. Front-end (dist) not found. Build your app.'));
+    // Basic root handler if dist is missing
+    app.get('/', (req, res) => res.send(`
+        <html><body style="font-family:sans-serif; text-align:center; padding:50px;">
+            <h1>EHA CRM Backend is Active</h1>
+            <p>Port: ${port}</p>
+            <p>API Endpoint: <a href="/admission-api">/admission-api</a></p>
+            <hr>
+            <p style="color:red;">Frontend build folder (dist) not found. Run 'npm run build' locally then upload.</p>
+        </body></html>
+    `));
 }
 
-// 6. DB Seeder
+// 6. DB INITIALIZATION
 async function dbInit() {
     console.log('--- DATABASE SEEDER STARTING ---');
     try {
         const schemaPath = path.join(__dirname, 'schema.sql');
-        if (!fs.existsSync(schemaPath)) return;
+        if (!fs.existsSync(schemaPath)) {
+            console.log('No schema.sql found, skipping seeder.');
+            return;
+        }
         const schemaSql = fs.readFileSync(schemaPath, 'utf8');
         const statements = schemaSql.split(/;\s*$/m).map(s => s.trim()).filter(s => s.length > 0 && !s.startsWith('--'));
         const conn = await pool.getConnection();
         for (let statement of statements) {
-            try { await conn.query(statement); } catch (e) {
-                if (!e.message.includes('already exists') && !e.message.includes('Duplicate entry')) console.error(e.message);
+            try { 
+                await conn.query(statement); 
+            } catch (e) {
+                if (!e.message.includes('already exists') && !e.message.includes('Duplicate entry')) {
+                    console.error('Seeder Error on statement:', statement.substring(0, 50), '...', e.message);
+                }
             }
         }
         conn.release();
@@ -197,9 +211,8 @@ async function dbInit() {
     }
 }
 
-// 7. Start Server
+// 7. BOOTSTRAP
 app.listen(port, () => {
-    console.log(`Server running on port ${port}`);
-    console.log(`API check: http://localhost:${port}/admission-api`);
-    dbInit();
+    console.log(`Express server successfully running on port ${port}`);
+    dbInit().catch(console.error);
 });

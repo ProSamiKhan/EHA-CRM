@@ -1,6 +1,7 @@
 
 import { Candidate, Batch, User, UserRole, AuditLog } from '../types';
 
+// Using relative URL to handle proxying correctly on Hostinger
 const API_URL = '/admission-api';
 
 async function fetchApi(action: string, method: 'GET' | 'POST' = 'POST', body?: any) {
