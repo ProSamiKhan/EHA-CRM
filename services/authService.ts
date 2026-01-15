@@ -4,7 +4,7 @@ import { User } from '../types';
 export class AuthService {
   static async login(username: string, password: string): Promise<User | null> {
     try {
-      const response = await fetch('/api', {
+      const response = await fetch('/api-v1-admission', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'login', username, password })

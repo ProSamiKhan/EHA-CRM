@@ -1,18 +1,21 @@
 
 import { Candidate, Batch, User, UserRole, AuditLog } from '../types';
 
-const API_URL = '/api'; // Updated for Node.js Express route
+const API_URL = '/api-v1-admission';
 
 async function fetchApi(action: string, method: 'GET' | 'POST' = 'POST', body?: any) {
   try {
     const options: RequestInit = {
-      method: 'POST', // Node.js backend uses POST for all /api actions for consistency
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, ...body })
     };
     
     const response = await fetch(API_URL, options);
-    if (!response.ok) throw new Error('Network response was not ok');
+    if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Network error: ${response.status}`);
+    }
     return await response.json();
   } catch (error) {
     console.error(`API Error (${action}):`, error);

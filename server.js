@@ -2,18 +2,18 @@
 const express = require('express');
 const mysql = require('mysql2/promise');
 const cors = require('cors');
-const bodyParser = require('body-parser');
 const path = require('path');
 require('dotenv').config();
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Enable JSON body parsing first
+// Enable CORS and JSON parsing
 app.use(cors());
-app.use(bodyParser.json({ limit: '50mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Request logger for debugging 404s
+// Request logger for debugging
 app.use((req, res, next) => {
     console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
     next();
@@ -39,12 +39,20 @@ async function getConn() {
     }
 }
 
-// API Route - defined BEFORE static files to prevent 404s/interceptions
-app.post('/api', async (req, res) => {
+// Health check / Test route
+app.get('/api-status', (req, res) => {
+    res.json({ status: 'online', timestamp: Date.now(), message: 'Admission CRM API is active' });
+});
+
+// Main API Handler - using a more unique path to avoid Hostinger routing conflicts
+const API_PATH = '/api-v1-admission';
+
+app.post(API_PATH, async (req, res) => {
     const { action } = req.body;
     let conn;
     
     if (!action) {
+        console.warn('API Call received without action');
         return res.status(400).json({ error: 'Missing action in request body' });
     }
 
@@ -53,7 +61,7 @@ app.post('/api', async (req, res) => {
         
         switch (action) {
             case 'login':
-                console.log('Attempting login for:', req.body.username);
+                console.log('Login attempt:', req.body.username);
                 const [users] = await conn.execute('SELECT * FROM users WHERE username = ? AND isActive = 1', [req.body.username]);
                 const user = users[0];
                 if (user && user.password === req.body.password) {
@@ -139,7 +147,7 @@ app.post('/api', async (req, res) => {
                 res.status(400).json({ error: 'Invalid action provided' });
         }
     } catch (err) {
-        console.error('API Error Processing Request:', err);
+        console.error('API Error:', err);
         res.status(500).json({ error: 'Server Internal Error', message: err.message });
     } finally {
         if (conn) await conn.end();
@@ -150,15 +158,16 @@ app.post('/api', async (req, res) => {
 const distPath = path.join(__dirname, 'dist');
 app.use(express.static(distPath));
 
-// Catch-all route to serve the SPA frontend
+// Catch-all route for SPA
 app.get('*', (req, res) => {
-    // If it's a request for an API, but using GET, explicitly 404
+    // Prevent catch-all from eating API-like requests that aren't matched
     if (req.url.startsWith('/api')) {
-        return res.status(405).json({ error: 'Method Not Allowed' });
+        return res.status(404).json({ error: 'API endpoint not found' });
     }
     res.sendFile(path.join(distPath, 'index.html'));
 });
 
 app.listen(port, () => {
-    console.log(`Server running and listening on port ${port}`);
+    console.log(`Server is running at http://localhost:${port}`);
+    console.log(`API Path: ${API_PATH}`);
 });
