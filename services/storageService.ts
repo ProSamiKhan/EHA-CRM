@@ -1,7 +1,7 @@
 
 import { Candidate, Batch, User, UserRole, AuditLog } from '../types';
 
-// Ensure this path starts with / to always hit the domain root
+// The leading slash ensures we always hit domain.com/admission-api
 const API_URL = '/admission-api';
 
 async function fetchApi(action: string, method: 'GET' | 'POST' = 'POST', body?: any) {
@@ -12,17 +12,20 @@ async function fetchApi(action: string, method: 'GET' | 'POST' = 'POST', body?: 
       body: JSON.stringify({ action, ...body })
     };
     
+    // Explicitly target the root API endpoint
     const response = await fetch(API_URL, options);
     
     if (!response.ok) {
-        const text = await response.text();
-        let errorMessage = `Server Error: ${response.status}`;
+        let errorMessage = `API Error ${response.status}`;
         try {
-            const json = JSON.parse(text);
-            errorMessage = json.error || json.message || errorMessage;
+            const data = await response.json();
+            errorMessage = data.message || data.error || errorMessage;
         } catch (e) {
-            if (text.includes('Page Not Found') || text.includes('Does Not Exist')) {
-                errorMessage = "The API endpoint /admission-api returned 404. Ensure server.js is running and .htaccess is correct.";
+            // If the response is HTML, it's likely a 404/500 from the web server
+            if (response.status === 404) {
+                errorMessage = "The API was not found. Ensure server.js is running in the Node.js Manager.";
+            } else if (response.status === 503) {
+                errorMessage = "System is in Setup Mode. Visit /installer.html";
             }
         }
         throw new Error(errorMessage);
@@ -30,14 +33,14 @@ async function fetchApi(action: string, method: 'GET' | 'POST' = 'POST', body?: 
     
     return await response.json();
   } catch (error: any) {
-    console.error(`API Error (${action}):`, error.message);
+    console.error(`StorageService.${action} failed:`, error.message);
     throw error;
   }
 }
 
 export class StorageService {
   static async init() {
-    console.log("Storage service initialized. API Endpoint:", API_URL);
+    console.log("Storage service initialized. Endpoint:", API_URL);
   }
 
   static async getUsers(): Promise<User[]> {
@@ -77,6 +80,6 @@ export class StorageService {
   }
 
   static logAudit(log: any) {
-    console.log("Audit log tracked locally", log);
+    console.log("Local Audit Log:", log);
   }
 }

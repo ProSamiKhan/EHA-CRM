@@ -7,126 +7,113 @@ const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
+// Hostinger uses dynamic ports. We MUST fallback to 3000 if not provided.
 const port = process.env.PORT || 3000;
 
-// 1. Core Middleware
+console.log('--- SYSTEM STARTUP ---');
+console.log('Node Version:', process.version);
+console.log('Environment Port:', process.env.PORT);
+console.log('Working Directory:', __dirname);
+
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// 2. Global Database State
+// Global State
 let pool = null;
 let isConfigured = false;
 
-// Function to initialize pool from environment
 async function initDbPool() {
-    if (!process.env.DB_NAME || !process.env.DB_USER) return false;
-    
+    const { DB_HOST, DB_USER, DB_PASSWORD, DB_NAME } = process.env;
+    if (!DB_NAME || !DB_USER) {
+        console.log("DB configuration missing. System in Setup Mode.");
+        return false;
+    }
     try {
         pool = mysql.createPool({
-            host: process.env.DB_HOST || 'localhost',
-            user: process.env.DB_USER,
-            password: process.env.DB_PASSWORD,
-            database: process.env.DB_NAME,
+            host: DB_HOST || 'localhost',
+            user: DB_USER,
+            password: DB_PASSWORD,
+            database: DB_NAME,
             waitForConnections: true,
-            connectionLimit: 10,
+            connectionLimit: 5,
             multipleStatements: true
         });
-        
-        // Test query
         const conn = await pool.getConnection();
         const [rows] = await conn.execute('SHOW TABLES LIKE "users"');
         conn.release();
-        
         isConfigured = rows.length > 0;
+        console.log("Database initialized successfully.");
         return true;
     } catch (e) {
-        console.error("Pool initialization failed:", e.message);
+        console.error("Database initialization failed:", e.message);
         return false;
     }
 }
 
-// 3. API Router Implementation
-const apiRouter = express.Router();
+// Explicit health check endpoint
+app.get('/admission-api/status', (req, res) => {
+    res.json({ status: 'online', configured: isConfigured, time: new Date().toISOString() });
+});
 
-// Matches /admission-api POST
-apiRouter.post('/', async (req, res) => {
+// Primary API Router
+app.post('/admission-api', async (req, res) => {
     const { action } = req.body;
+    console.log(`API Request: ${action}`);
+
     if (!action) return res.status(400).json({ error: 'Action required' });
 
-    // Handle Setup/Installer specific actions first
-    if (action === 'test_db_connection') {
-        const { host, user, pass, name } = req.body;
-        try {
+    try {
+        // Installation logic (No configuration required)
+        if (action === 'test_db_connection') {
+            const { host, user, pass, name } = req.body;
             const testConn = await mysql.createConnection({ host, user, password: pass, database: name });
             await testConn.end();
             return res.json({ status: 'success' });
-        } catch (err) {
-            return res.status(500).json({ status: 'error', message: err.message });
         }
-    }
 
-    if (action === 'perform_install') {
-        const { dbHost, dbUser, dbPass, dbName, adminUser, adminPass } = req.body;
-        try {
-            // 1. Re-test connection
+        if (action === 'perform_install') {
+            const { dbHost, dbUser, dbPass, dbName, adminUser, adminPass } = req.body;
             const testPool = mysql.createPool({ host: dbHost, user: dbUser, password: dbPass, database: dbName, multipleStatements: true });
             const conn = await testPool.getConnection();
-            
-            // 2. Run Schema
             const schemaPath = path.join(__dirname, 'schema.sql');
             if (fs.existsSync(schemaPath)) {
                 const schemaSql = fs.readFileSync(schemaPath, 'utf8');
                 await conn.query(schemaSql);
             }
-
-            // 3. Create Admin
             await conn.execute(
                 'REPLACE INTO users (id, username, password, name, role, isActive) VALUES (?, ?, ?, ?, ?, ?)',
                 ['admin-init', adminUser, adminPass, 'Super Admin', 'SUPER_ADMIN', 1]
             );
-            
             conn.release();
             await testPool.end();
 
-            // 4. Update .env file locally (optional but good for persistence)
             const envContent = `DB_HOST=${dbHost}\nDB_USER=${dbUser}\nDB_PASSWORD=${dbPass}\nDB_NAME=${dbName}\nPORT=${port}`;
             fs.writeFileSync(path.join(__dirname, '.env'), envContent);
             
-            // 5. Update runtime process vars
             process.env.DB_HOST = dbHost;
             process.env.DB_USER = dbUser;
             process.env.DB_PASSWORD = dbPass;
             process.env.DB_NAME = dbName;
             
-            // 6. Restart local pool
             await initDbPool();
-            
             return res.json({ status: 'success' });
-        } catch (err) {
-            return res.status(500).json({ status: 'error', message: err.message });
         }
-    }
 
-    // Regular API check
-    if (!isConfigured || !pool) {
-        return res.status(503).json({ error: 'Database not initialized. Visit /installer.html' });
-    }
+        // Standard CRM Logic
+        if (!isConfigured || !pool) return res.status(503).json({ error: 'System not configured' });
 
-    try {
         switch (action) {
             case 'login':
                 const [users] = await pool.execute('SELECT * FROM users WHERE username = ? AND isActive = 1', [req.body.username]);
                 const user = users[0];
                 if (user && user.password === req.body.password) {
-                    const responseUser = { ...user };
-                    delete responseUser.password;
-                    res.json({ status: 'success', user: responseUser });
+                    const { password, ...safeUser } = user;
+                    res.json({ status: 'success', user: safeUser });
                 } else {
                     res.status(401).json({ error: 'Invalid credentials' });
                 }
                 break;
-
             case 'get_candidates':
                 const [candidates] = await pool.execute('SELECT * FROM candidates ORDER BY createdAt DESC');
                 res.json(candidates.map(c => ({
@@ -138,7 +125,6 @@ apiRouter.post('/', async (req, res) => {
                     paymentHistory: typeof c.paymentHistory === 'string' ? JSON.parse(c.paymentHistory) : c.paymentHistory
                 })));
                 break;
-
             case 'save_candidate':
                 const data = req.body.candidate;
                 await pool.execute(
@@ -158,23 +144,19 @@ apiRouter.post('/', async (req, res) => {
                 );
                 res.json({ status: 'success' });
                 break;
-
             case 'get_batches':
                 const [batches] = await pool.execute('SELECT * FROM batches');
                 res.json(batches);
                 break;
-
             case 'save_batch':
                 const b = req.body.batch;
                 await pool.execute('REPLACE INTO batches (id, name, maxSeats, createdAt) VALUES (?, ?, ?, ?)', [b.id, b.name, b.maxSeats, b.createdAt]);
                 res.json({ status: 'success' });
                 break;
-
             case 'get_users':
                 const [userList] = await pool.execute('SELECT id, username, name, role, isActive FROM users');
                 res.json(userList);
                 break;
-
             case 'save_user':
                 const u = req.body.user;
                 if (req.body.password) {
@@ -186,60 +168,44 @@ apiRouter.post('/', async (req, res) => {
                 }
                 res.json({ status: 'success' });
                 break;
-
             case 'delete_user':
                 await pool.execute('DELETE FROM users WHERE id = ?', [req.body.id]);
                 res.json({ status: 'success' });
                 break;
-
             case 'delete_batch':
                 await pool.execute('DELETE FROM batches WHERE id = ?', [req.body.id]);
                 res.json({ status: 'success' });
                 break;
-
             default:
                 res.status(400).json({ error: `Action '${action}' not supported` });
         }
     } catch (err) {
-        res.status(500).json({ error: 'API Error', message: err.message });
+        console.error("API Processing Error:", err.message);
+        res.status(500).json({ error: 'Internal Server Error', message: err.message });
     }
 });
 
-// Mount API at /admission-api
-app.use('/admission-api', apiRouter);
-
-// 4. Static File Handling
+// Static Serving
 const distPath = path.join(__dirname, 'dist');
-
-// Setup redirect middleware: If not configured, force redirect to installer
-app.get('/', (req, res, next) => {
-    if (!isConfigured) return res.redirect('/installer.html');
-    next();
-});
-
-// Explicit route for the installer script
-app.get('/installer.tsx', (req, res) => {
-    res.sendFile(path.join(__dirname, 'installer.tsx'));
-});
+app.get('/installer.html', (req, res) => res.sendFile(path.join(__dirname, 'installer.html')));
+app.get('/installer.tsx', (req, res) => res.sendFile(path.join(__dirname, 'installer.tsx')));
 
 if (fs.existsSync(distPath)) {
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
-        if (req.originalUrl === '/installer.html') return res.sendFile(path.join(__dirname, 'installer.html'));
-        if (req.originalUrl.startsWith('/admission-api')) return res.status(404).json({ error: 'API path not found' });
-        if (!isConfigured) return res.redirect('/installer.html');
+        if (req.path.startsWith('/admission-api')) return;
+        if (!isConfigured && !req.path.includes('installer')) return res.redirect('/installer.html');
         res.sendFile(path.join(distPath, 'index.html'));
     });
 } else {
     app.get('/', (req, res) => {
         if (!isConfigured) return res.redirect('/installer.html');
-        res.send('Backend Active. Dashboard not built.');
+        res.status(200).send('Backend is active. Front-end build is missing (npm run build).');
     });
-    app.get('/installer.html', (req, res) => res.sendFile(path.join(__dirname, 'installer.html')));
 }
 
-// 6. Listen
-app.listen(port, async () => {
-    console.log(`Server running on port ${port}`);
+// Start on 0.0.0.0 for external availability
+app.listen(port, '0.0.0.0', async () => {
+    console.log(`Server started on 0.0.0.0:${port}`);
     await initDbPool();
 });

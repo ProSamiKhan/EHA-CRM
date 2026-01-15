@@ -2,13 +2,16 @@
 RewriteEngine On
 RewriteBase /
 
-# 1. Forward API requests to Node.js
+# 1. Direct all API traffic to the dynamic port (internally handled by Node Selector)
+# If the Node Selector is set to server.js, Hostinger should handle this.
+# This rule is a safety fallback for manual proxying.
 RewriteCond %{REQUEST_URI} ^/admission-api [NC]
-RewriteRule ^(.*)$ http://127.0.0.1:3000/$1 [P,L]
+RewriteRule ^(.*)$ http://127.0.0.1:%{ENV:PORT}/$1 [P,L]
 
-# 2. Serve static files if they exist
-RewriteCond %{REQUEST_FILENAME} -f
-RewriteRule ^ - [L]
+# 2. Redirect to installer if not configured (Logic handled in server.js, but .htaccess can assist)
+# RewriteRule ^$ installer.html [L]
 
-# 3. Everything else to the SPA (server.js handles the rest)
-RewriteRule ^ server.js [L]
+# 3. Standard file serving for the SPA
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.html [L]
