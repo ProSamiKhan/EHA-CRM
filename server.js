@@ -1,4 +1,3 @@
-
 const express = require('express');
 const mysql = require('mysql2/promise');
 const cors = require('cors');
@@ -14,7 +13,7 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Logging
+// Logging for Hostinger console
 app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
     next();
@@ -39,28 +38,31 @@ const pool = mysql.createPool(dbConfig);
 const apiRouter = express.Router();
 
 // Health check / Status
-apiRouter.all('/', async (req, res) => {
-    if (req.method === 'GET') {
-        try {
-            const conn = await pool.getConnection();
-            const [users] = await conn.execute('SELECT COUNT(*) as count FROM users');
-            conn.release();
-            return res.json({ 
-                status: 'online', 
-                database: 'connected', 
-                count: users[0].count,
-                timestamp: new Date().toISOString()
-            });
-        } catch (err) {
-            return res.status(500).json({ 
-                status: 'online', 
-                database: 'error', 
-                message: err.message 
-            });
-        }
+// Matches /admission-api or /admission-api/
+apiRouter.get('/', async (req, res) => {
+    try {
+        const conn = await pool.getConnection();
+        const [users] = await conn.execute('SELECT COUNT(*) as count FROM users');
+        conn.release();
+        return res.json({ 
+            status: 'online', 
+            database: 'connected', 
+            userCount: users[0].count,
+            timestamp: new Date().toISOString(),
+            message: "EHA CRM API is functional"
+        });
+    } catch (err) {
+        return res.status(500).json({ 
+            status: 'online', 
+            database: 'error', 
+            message: err.message,
+            hint: "Check if database credentials in Hostinger Environment Variables are correct."
+        });
     }
-    
-    // POST Handler for actions
+});
+
+// Main POST handler for actions
+apiRouter.post('/', async (req, res) => {
     const { action } = req.body;
     if (!action) return res.status(400).json({ error: 'Missing action' });
 
@@ -157,25 +159,35 @@ apiRouter.all('/', async (req, res) => {
     }
 });
 
-// Mount the API Router
+// Mount the API Router explicitly
 app.use('/admission-api', apiRouter);
 
-// 4. Static File Serving
+// 4. Static File Serving (Vite Build Output)
 const distPath = path.join(__dirname, 'dist');
 if (fs.existsSync(distPath)) {
     app.use(express.static(distPath));
-    // SPA Fallback
+    // SPA Fallback: Send all other requests to index.html
     app.get('*', (req, res) => {
-        if (req.originalUrl.startsWith('/admission-api')) return res.status(404).json({ error: 'API route not found' });
+        // Only fallback if it's not trying to hit the API
+        if (req.originalUrl.startsWith('/admission-api')) {
+            return res.status(404).json({ error: 'API endpoint not found' });
+        }
         res.sendFile(path.join(distPath, 'index.html'));
     });
 } else {
+    // Basic root handler if dist is missing (useful during initial deployment)
     app.get('/', (req, res) => {
-        res.status(200).send('Backend is running, but frontend "dist" folder is missing. Run "npm run build" to generate it.');
+        res.status(200).send(`
+            <h1>EHA CRM Backend</h1>
+            <p>Status: Running</p>
+            <p>API Endpoint: <a href="/admission-api">/admission-api</a></p>
+            <hr>
+            <p style="color:red">Warning: 'dist' folder not found. Please run 'npm run build' locally and upload the folder.</p>
+        `);
     });
 }
 
-// 5. DB Initialization
+// 5. Database Initialization (Seeder)
 async function dbInit() {
     try {
         const schemaPath = path.join(__dirname, 'schema.sql');
@@ -184,19 +196,23 @@ async function dbInit() {
         const statements = schemaSql.split(/;\s*$/m).map(s => s.trim()).filter(s => s.length > 0 && !s.startsWith('--'));
         const conn = await pool.getConnection();
         for (let statement of statements) {
-            try { await conn.query(statement); } catch (e) {
-                if (!e.message.includes('already exists') && !e.message.includes('Duplicate entry')) console.error(e.message);
+            try { 
+                await conn.query(statement); 
+            } catch (e) {
+                if (!e.message.includes('already exists') && !e.message.includes('Duplicate entry')) {
+                    console.error('DB Init Warning:', e.message);
+                }
             }
         }
         conn.release();
-        console.log('Database initialized successfully.');
+        console.log('Database schema verified/initialized.');
     } catch (err) {
         console.error('Database initialization failed:', err.message);
     }
 }
 
-// 6. Start
+// 6. Start Server
 app.listen(port, () => {
-    console.log(`Server listening on port ${port}`);
+    console.log(`Server process started on port ${port}`);
     dbInit();
 });
