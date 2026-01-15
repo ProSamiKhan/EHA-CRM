@@ -1,6 +1,4 @@
 
--- Database Schema for EHA CRM
-
 CREATE TABLE IF NOT EXISTS users (
     id VARCHAR(50) PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
@@ -33,13 +31,11 @@ CREATE TABLE IF NOT EXISTS candidates (
     FOREIGN KEY (batchId) REFERENCES batches(id)
 );
 
--- Seed Initial Admin User
 INSERT IGNORE INTO users (id, username, password, name, role, isActive) 
 VALUES ('admin-01', 'admin', 'admin123', 'Super Admin', 'SUPER_ADMIN', 1);
 
--- Seed Initial Batches
-INSERT IGNORE INTO batches (id, name, maxSeats, createdAt) VALUES 
-('batch-1', 'May 2026', 60, 1714545000000);
+INSERT IGNORE INTO batches (id, name, maxSeats, createdAt) 
+VALUES ('batch-1', 'May 2026', 60, 1714545000000);
 
-INSERT IGNORE INTO batches (id, name, maxSeats, createdAt) VALUES
-('batch-2', 'June 2026', 60, 1714545000000);
+INSERT IGNORE INTO batches (id, name, maxSeats, createdAt) 
+VALUES ('batch-2', 'June 2026', 60, 1714545000000);
