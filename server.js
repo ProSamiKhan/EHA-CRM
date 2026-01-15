@@ -14,6 +14,12 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Request Logger for Debugging in Hostinger Logs
+app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    next();
+});
+
 // Database Pool Configuration
 const dbConfig = {
     host: process.env.DB_HOST || 'localhost',
@@ -24,90 +30,79 @@ const dbConfig = {
     connectionLimit: 10,
     queueLimit: 0,
     ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
-    multipleStatements: true // Enable for the seeder
+    multipleStatements: true
 };
 
 const pool = mysql.createPool(dbConfig);
 
 /**
  * Database Auto-Initialization (Seeder)
- * Automatically runs schema.sql on startup
  */
 async function dbInit() {
-    console.log('--- DATABASE INITIALIZATION START ---');
-    console.log(`Target Host: ${dbConfig.host}`);
-    console.log(`Target User: ${dbConfig.user}`);
-    console.log(`Target DB: ${dbConfig.database}`);
-
+    console.log('--- DB SEEDER STARTING ---');
     try {
         const schemaPath = path.join(__dirname, 'schema.sql');
         if (!fs.existsSync(schemaPath)) {
-            console.warn('schema.sql not found. Skipping auto-initialization.');
+            console.warn('schema.sql not found at:', schemaPath);
             return;
         }
 
         const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-        // Split by semicolon and filter out empty strings/comments
         const statements = schemaSql
             .split(/;\s*$/m)
             .map(s => s.trim())
             .filter(s => s.length > 0 && !s.startsWith('--'));
 
         const conn = await pool.getConnection();
-        console.log('Database connection successful. Executing schema...');
+        console.log('Connected to DB for seeding...');
 
         for (let statement of statements) {
             try {
                 await conn.query(statement);
             } catch (stmtErr) {
-                // Ignore errors like "Table already exists" or "Duplicate entry"
+                // Ignore "already exists" errors
                 if (!stmtErr.message.includes('already exists') && !stmtErr.message.includes('Duplicate entry')) {
-                    console.error('Error executing statement:', statement.substring(0, 50) + '...');
-                    console.error(stmtErr.message);
+                    console.error('Seeding Statement Error:', stmtErr.message);
                 }
             }
         }
 
         conn.release();
-        console.log('--- DATABASE INITIALIZATION COMPLETE ---');
+        console.log('--- DB SEEDER FINISHED ---');
     } catch (err) {
-        console.error('--- DATABASE INITIALIZATION FAILED ---');
-        console.error('Error:', err.message);
-        console.log('Verify your environment variables in Hostinger Panel.');
+        console.error('--- DB SEEDER FAILED ---');
+        console.error(err.message);
     }
 }
 
-// Diagnostic Route: Visit /admission-api in your browser to check status
-app.get('/admission-api', async (req, res) => {
+// API Routes
+const API_PATH = '/admission-api';
+
+// GET route for diagnostics
+app.get([API_PATH, `${API_PATH}/`], async (req, res) => {
     try {
-        const [users] = await pool.execute('SELECT COUNT(*) as count FROM users');
-        const [batches] = await pool.execute('SELECT COUNT(*) as count FROM batches');
+        const conn = await pool.getConnection();
+        const [users] = await conn.execute('SELECT COUNT(*) as count FROM users');
+        conn.release();
         
         res.json({ 
             status: 'online', 
             database: 'connected', 
-            stats: {
-                userCount: users[0].count,
-                batchCount: batches[0].count
-            },
-            timestamp: new Date().toISOString(),
-            message: 'Admission CRM API is fully functional.' 
+            userCount: users[0].count,
+            timestamp: new Date().toISOString()
         });
     } catch (err) {
         res.status(500).json({ 
             status: 'online', 
             database: 'error', 
             error: err.message,
-            stack: err.code,
-            tip: 'If you see Access Denied, check your Hostinger DB credentials.'
+            code: err.code 
         });
     }
 });
 
-// Main API Handler
-const API_PATH = '/admission-api';
-
-app.post(API_PATH, async (req, res) => {
+// POST route for all CRM actions
+app.post([API_PATH, `${API_PATH}/`], async (req, res) => {
     const { action } = req.body;
     
     if (!action) {
@@ -117,21 +112,17 @@ app.post(API_PATH, async (req, res) => {
     try {
         switch (action) {
             case 'login':
-                console.log(`Login request received for: ${req.body.username}`);
                 const [users] = await pool.execute(
                     'SELECT * FROM users WHERE username = ? AND isActive = 1', 
                     [req.body.username]
                 );
-                
                 const user = users[0];
                 if (user && user.password === req.body.password) {
-                    console.log('User authenticated successfully');
                     const responseUser = { ...user };
                     delete responseUser.password;
                     res.json({ status: 'success', user: responseUser });
                 } else {
-                    console.warn(`Authentication failed for user: ${req.body.username}`);
-                    res.status(401).json({ error: 'Invalid username or password' });
+                    res.status(401).json({ error: 'Invalid credentials' });
                 }
                 break;
 
@@ -219,16 +210,14 @@ app.post(API_PATH, async (req, res) => {
 const distPath = path.join(__dirname, 'dist');
 app.use(express.static(distPath));
 
-// Catch-all for SPA - Must be last
+// Catch-all for SPA (must be last)
 app.get('*', (req, res) => {
     res.sendFile(path.join(distPath, 'index.html'));
 });
 
-// Run DB Init then Start Listening
-dbInit().then(() => {
-    app.listen(port, () => {
-        console.log(`Server running on port ${port}`);
-        console.log(`Diagnostic path: GET /admission-api`);
-        console.log(`API path: POST /admission-api`);
-    });
+// Start Server immediately
+app.listen(port, () => {
+    console.log(`Server listening on port ${port}`);
+    // Run seeder in background
+    dbInit();
 });
