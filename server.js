@@ -3,6 +3,7 @@ const express = require('express');
 const mysql = require('mysql2/promise');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
@@ -22,20 +23,73 @@ const dbConfig = {
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
-    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
+    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+    multipleStatements: true // Enable for the seeder
 };
 
 const pool = mysql.createPool(dbConfig);
 
+/**
+ * Database Auto-Initialization (Seeder)
+ * Automatically runs schema.sql on startup
+ */
+async function dbInit() {
+    console.log('--- DATABASE INITIALIZATION START ---');
+    console.log(`Target Host: ${dbConfig.host}`);
+    console.log(`Target User: ${dbConfig.user}`);
+    console.log(`Target DB: ${dbConfig.database}`);
+
+    try {
+        const schemaPath = path.join(__dirname, 'schema.sql');
+        if (!fs.existsSync(schemaPath)) {
+            console.warn('schema.sql not found. Skipping auto-initialization.');
+            return;
+        }
+
+        const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+        // Split by semicolon and filter out empty strings/comments
+        const statements = schemaSql
+            .split(/;\s*$/m)
+            .map(s => s.trim())
+            .filter(s => s.length > 0 && !s.startsWith('--'));
+
+        const conn = await pool.getConnection();
+        console.log('Database connection successful. Executing schema...');
+
+        for (let statement of statements) {
+            try {
+                await conn.query(statement);
+            } catch (stmtErr) {
+                // Ignore errors like "Table already exists" or "Duplicate entry"
+                if (!stmtErr.message.includes('already exists') && !stmtErr.message.includes('Duplicate entry')) {
+                    console.error('Error executing statement:', statement.substring(0, 50) + '...');
+                    console.error(stmtErr.message);
+                }
+            }
+        }
+
+        conn.release();
+        console.log('--- DATABASE INITIALIZATION COMPLETE ---');
+    } catch (err) {
+        console.error('--- DATABASE INITIALIZATION FAILED ---');
+        console.error('Error:', err.message);
+        console.log('Verify your environment variables in Hostinger Panel.');
+    }
+}
+
 // Diagnostic Route: Visit /admission-api in your browser to check status
 app.get('/admission-api', async (req, res) => {
     try {
-        const conn = await pool.getConnection();
-        await conn.query('SELECT 1');
-        conn.release();
+        const [users] = await pool.execute('SELECT COUNT(*) as count FROM users');
+        const [batches] = await pool.execute('SELECT COUNT(*) as count FROM batches');
+        
         res.json({ 
             status: 'online', 
             database: 'connected', 
+            stats: {
+                userCount: users[0].count,
+                batchCount: batches[0].count
+            },
             timestamp: new Date().toISOString(),
             message: 'Admission CRM API is fully functional.' 
         });
@@ -44,7 +98,8 @@ app.get('/admission-api', async (req, res) => {
             status: 'online', 
             database: 'error', 
             error: err.message,
-            tip: 'Check your .env file or Hostinger DB credentials.'
+            stack: err.code,
+            tip: 'If you see Access Denied, check your Hostinger DB credentials.'
         });
     }
 });
@@ -62,7 +117,7 @@ app.post(API_PATH, async (req, res) => {
     try {
         switch (action) {
             case 'login':
-                console.log(`Login attempt: ${req.body.username}`);
+                console.log(`Login request received for: ${req.body.username}`);
                 const [users] = await pool.execute(
                     'SELECT * FROM users WHERE username = ? AND isActive = 1', 
                     [req.body.username]
@@ -70,11 +125,13 @@ app.post(API_PATH, async (req, res) => {
                 
                 const user = users[0];
                 if (user && user.password === req.body.password) {
+                    console.log('User authenticated successfully');
                     const responseUser = { ...user };
                     delete responseUser.password;
                     res.json({ status: 'success', user: responseUser });
                 } else {
-                    res.status(401).json({ error: 'Invalid credentials' });
+                    console.warn(`Authentication failed for user: ${req.body.username}`);
+                    res.status(401).json({ error: 'Invalid username or password' });
                 }
                 break;
 
@@ -167,8 +224,11 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(distPath, 'index.html'));
 });
 
-app.listen(port, () => {
-    console.log(`Server running on port ${port}`);
-    console.log(`Diagnostic path: GET /admission-api`);
-    console.log(`API path: POST /admission-api`);
+// Run DB Init then Start Listening
+dbInit().then(() => {
+    app.listen(port, () => {
+        console.log(`Server running on port ${port}`);
+        console.log(`Diagnostic path: GET /admission-api`);
+        console.log(`API path: POST /admission-api`);
+    });
 });
