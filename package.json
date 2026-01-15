@@ -10,7 +10,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "build": "vite build --outDir public",
+    "build": "vite build",
     "dev": "vite"
   },
   "dependencies": {
@@ -18,10 +18,16 @@
     "mysql2": "^3.9.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
-    "body-parser": "^1.20.2"
+    "body-parser": "^1.20.2",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^2.12.0"
   },
   "devDependencies": {
     "vite": "^6.0.0",
-    "@vitejs/plugin-react": "^4.3.4"
+    "@vitejs/plugin-react": "^4.3.4",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.0.0"
   }
 }

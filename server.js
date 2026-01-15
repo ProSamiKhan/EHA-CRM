@@ -9,15 +9,13 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Middleware
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// Hostinger build output is now in the 'public' folder
-const publicPath = path.join(__dirname, 'public');
-app.use(express.static(publicPath));
+// Serve static files from the 'dist' directory created by Vite build
+const distPath = path.join(__dirname, 'dist');
+app.use(express.static(distPath));
 
-// Database Configuration
 const dbConfig = {
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER,
@@ -37,14 +35,11 @@ async function getConn() {
     }
 }
 
-// API Route
 app.post('/api', async (req, res) => {
     const { action } = req.body;
     let conn;
-
     try {
         conn = await getConn();
-
         switch (action) {
             case 'login':
                 const [users] = await conn.execute('SELECT * FROM users WHERE username = ? AND isActive = 1', [req.body.username]);
@@ -56,7 +51,6 @@ app.post('/api', async (req, res) => {
                     res.status(401).json({ error: 'Invalid credentials' });
                 }
                 break;
-
             case 'get_candidates':
                 const [candidates] = await conn.execute('SELECT * FROM candidates ORDER BY createdAt DESC');
                 res.json(candidates.map(c => ({
@@ -68,7 +62,6 @@ app.post('/api', async (req, res) => {
                     paymentHistory: typeof c.paymentHistory === 'string' ? JSON.parse(c.paymentHistory) : c.paymentHistory
                 })));
                 break;
-
             case 'save_candidate':
                 const data = req.body.candidate;
                 await conn.execute(
@@ -88,24 +81,20 @@ app.post('/api', async (req, res) => {
                 );
                 res.json({ status: 'success' });
                 break;
-
             case 'get_batches':
                 const [batches] = await conn.execute('SELECT * FROM batches');
                 res.json(batches);
                 break;
-
             case 'save_batch':
                 const b = req.body.batch;
                 await conn.execute('REPLACE INTO batches (id, name, maxSeats, createdAt) VALUES (?, ?, ?, ?)', 
                     [b.id, b.name, b.maxSeats, b.createdAt]);
                 res.json({ status: 'success' });
                 break;
-
             case 'get_users':
                 const [userList] = await conn.execute('SELECT id, username, name, role, isActive FROM users');
                 res.json(userList);
                 break;
-
             case 'save_user':
                 const u = req.body.user;
                 if (req.body.password) {
@@ -117,17 +106,14 @@ app.post('/api', async (req, res) => {
                 }
                 res.json({ status: 'success' });
                 break;
-
             case 'delete_user':
                 await conn.execute('DELETE FROM users WHERE id = ?', [req.body.id]);
                 res.json({ status: 'success' });
                 break;
-
             case 'delete_batch':
                 await conn.execute('DELETE FROM batches WHERE id = ?', [req.body.id]);
                 res.json({ status: 'success' });
                 break;
-
             default:
                 res.status(400).json({ error: 'Invalid action' });
         }
@@ -139,9 +125,8 @@ app.post('/api', async (req, res) => {
     }
 });
 
-// All non-API requests serve the index.html from the public folder
 app.get('*', (req, res) => {
-    res.sendFile(path.join(publicPath, 'index.html'));
+    res.sendFile(path.join(distPath, 'index.html'));
 });
 
 app.listen(port, () => {
