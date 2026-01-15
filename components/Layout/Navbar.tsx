@@ -11,6 +11,11 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ user, onLogout, onMenuToggle, isDarkMode, onThemeToggle }) => {
+  const formatRole = (role?: string) => {
+    if (!role) return 'USER';
+    return role.replace('_', ' ');
+  };
+
   return (
     <nav className="h-16 bg-white dark:bg-slate-900 border-b border-stone-200 dark:border-slate-800 flex items-center justify-between px-4 md:px-6 shrink-0 transition-colors duration-300">
       <div className="flex items-center gap-3">
@@ -42,7 +47,7 @@ export const Navbar: React.FC<NavbarProps> = ({ user, onLogout, onMenuToggle, is
 
         <div className="text-right hidden sm:block">
           <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{user.name}</p>
-          <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-widest font-bold">{user.role.replace('_', ' ')}</p>
+          <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-widest font-bold">{formatRole(user.role)}</p>
         </div>
         
         <div className="h-8 w-px bg-stone-200 dark:bg-slate-800 mx-1 hidden sm:block"></div>

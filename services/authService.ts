@@ -12,12 +12,18 @@ export class AuthService {
       
       if (response.ok) {
         const data = await response.json();
-        localStorage.setItem('crm_session', JSON.stringify(data.user));
-        return data.user;
+        if (data.status === 'success' && data.user) {
+          localStorage.setItem('crm_session', JSON.stringify(data.user));
+          return data.user;
+        }
       }
+      
+      // Clear session if login fails
+      localStorage.removeItem('crm_session');
       return null;
     } catch (e) {
-      console.error("Login failed", e);
+      console.error("Login request failed", e);
+      localStorage.removeItem('crm_session');
       return null;
     }
   }
@@ -27,7 +33,19 @@ export class AuthService {
   }
 
   static getCurrentUser(): User | null {
-    const session = localStorage.getItem('crm_session');
-    return session ? JSON.parse(session) : null;
+    try {
+      const session = localStorage.getItem('crm_session');
+      if (!session) return null;
+      
+      const user = JSON.parse(session);
+      // Basic validation to ensure the object is a valid User
+      if (user && user.id && user.role) {
+        return user;
+      }
+      return null;
+    } catch (e) {
+      localStorage.removeItem('crm_session');
+      return null;
+    }
   }
 }

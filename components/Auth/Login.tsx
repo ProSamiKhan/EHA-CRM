@@ -13,16 +13,26 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError('');
-    setTimeout(() => {
-      const user = AuthService.login(username, password);
-      if (user) onLogin(user);
-      else setError('Invalid username or password');
+    
+    try {
+      // The critical fix: we must await the async login call
+      const user = await AuthService.login(username, password);
+      
+      if (user) {
+        onLogin(user);
+      } else {
+        setError('Invalid username or password');
+      }
+    } catch (err) {
+      setError('Connection error. Please try again.');
+      console.error('Login error:', err);
+    } finally {
       setIsLoading(false);
-    }, 800);
+    }
   };
 
   return (

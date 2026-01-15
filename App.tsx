@@ -27,7 +27,7 @@ const App: React.FC = () => {
   useEffect(() => {
     StorageService.init();
     const loggedInUser = AuthService.getCurrentUser();
-    if (loggedInUser) {
+    if (loggedInUser && loggedInUser.role) { // Verify role exists
       setUser(loggedInUser);
     }
   }, []);
@@ -55,6 +55,12 @@ const App: React.FC = () => {
   const handleViewChange = (view: string) => {
     setCurrentView(view);
     setIsMobileMenuOpen(false); 
+  };
+
+  // Safe role formatter
+  const formatRole = (role?: string) => {
+    if (!role) return 'USER';
+    return role.replace('_', ' ');
   };
 
   if (!user) {
@@ -164,7 +170,7 @@ const App: React.FC = () => {
           
           <div className="p-6">
             <div className="bg-slate-800/50 rounded-xl p-4 mb-6">
-              <p className="text-xs font-bold text-indigo-400 uppercase tracking-widest mb-1">{user.role.replace('_', ' ')}</p>
+              <p className="text-xs font-bold text-indigo-400 uppercase tracking-widest mb-1">{formatRole(user.role)}</p>
               <p className="text-sm font-bold text-white truncate">{user.name}</p>
             </div>
 
