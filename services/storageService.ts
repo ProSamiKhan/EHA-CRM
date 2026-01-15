@@ -1,7 +1,7 @@
 
 import { Candidate, Batch, User, UserRole, AuditLog } from '../types';
 
-// Using absolute path for clarity in production routing
+// Ensure this path starts with / to always hit the domain root
 const API_URL = '/admission-api';
 
 async function fetchApi(action: string, method: 'GET' | 'POST' = 'POST', body?: any) {
@@ -15,33 +15,29 @@ async function fetchApi(action: string, method: 'GET' | 'POST' = 'POST', body?: 
     const response = await fetch(API_URL, options);
     
     if (!response.ok) {
-        // Try to get JSON error first
         const text = await response.text();
-        let errorMessage = `Server error: ${response.status}`;
+        let errorMessage = `Server Error: ${response.status}`;
         try {
             const json = JSON.parse(text);
             errorMessage = json.error || json.message || errorMessage;
         } catch (e) {
-            // If not JSON, it might be a LiteSpeed/Apache 404 page
             if (text.includes('Page Not Found') || text.includes('Does Not Exist')) {
-                errorMessage = "LiteSpeed 404: The server failed to route this request to the Node.js app. Check .htaccess or app startup file.";
-            } else {
-                errorMessage = text.substring(0, 100);
+                errorMessage = "The API endpoint /admission-api returned 404. Ensure server.js is running and .htaccess is correct.";
             }
         }
         throw new Error(errorMessage);
     }
     
     return await response.json();
-  } catch (error) {
-    console.error(`API Error (${action}):`, error);
+  } catch (error: any) {
+    console.error(`API Error (${action}):`, error.message);
     throw error;
   }
 }
 
 export class StorageService {
   static async init() {
-    console.log("Storage service initialized. Target:", API_URL);
+    console.log("Storage service initialized. API Endpoint:", API_URL);
   }
 
   static async getUsers(): Promise<User[]> {

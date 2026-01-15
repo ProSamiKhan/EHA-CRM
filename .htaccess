@@ -1,6 +1,14 @@
+
 RewriteEngine On
 RewriteBase /
-RewriteRule ^index\.html$ - [L]
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule . /server.js [L]
+
+# 1. Forward API requests to Node.js
+RewriteCond %{REQUEST_URI} ^/admission-api [NC]
+RewriteRule ^(.*)$ http://127.0.0.1:3000/$1 [P,L]
+
+# 2. Serve static files if they exist
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteRule ^ - [L]
+
+# 3. Everything else to the SPA (server.js handles the rest)
+RewriteRule ^ server.js [L]

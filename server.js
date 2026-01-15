@@ -1,3 +1,4 @@
+
 const express = require('express');
 const mysql = require('mysql2/promise');
 const cors = require('cors');
@@ -8,63 +9,109 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-// 1. Basic Middleware
+// 1. Core Middleware
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Logging for Hostinger console
-app.use((req, res, next) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
-    next();
-});
+// 2. Global Database State
+let pool = null;
+let isConfigured = false;
 
-// 2. Database Connection
-const dbConfig = {
-    host: process.env.DB_HOST || 'localhost',
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0,
-    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
-    multipleStatements: true
-};
+// Function to initialize pool from environment
+async function initDbPool() {
+    if (!process.env.DB_NAME || !process.env.DB_USER) return false;
+    
+    try {
+        pool = mysql.createPool({
+            host: process.env.DB_HOST || 'localhost',
+            user: process.env.DB_USER,
+            password: process.env.DB_PASSWORD,
+            database: process.env.DB_NAME,
+            waitForConnections: true,
+            connectionLimit: 10,
+            multipleStatements: true
+        });
+        
+        // Test query
+        const conn = await pool.getConnection();
+        const [rows] = await conn.execute('SHOW TABLES LIKE "users"');
+        conn.release();
+        
+        isConfigured = rows.length > 0;
+        return true;
+    } catch (e) {
+        console.error("Pool initialization failed:", e.message);
+        return false;
+    }
+}
 
-const pool = mysql.createPool(dbConfig);
-
-// 3. API Router
+// 3. API Router Implementation
 const apiRouter = express.Router();
 
-// Health check / Status
-// Matches /admission-api or /admission-api/
-apiRouter.get('/', async (req, res) => {
-    try {
-        const conn = await pool.getConnection();
-        const [users] = await conn.execute('SELECT COUNT(*) as count FROM users');
-        conn.release();
-        return res.json({ 
-            status: 'online', 
-            database: 'connected', 
-            userCount: users[0].count,
-            timestamp: new Date().toISOString(),
-            message: "EHA CRM API is functional"
-        });
-    } catch (err) {
-        return res.status(500).json({ 
-            status: 'online', 
-            database: 'error', 
-            message: err.message,
-            hint: "Check if database credentials in Hostinger Environment Variables are correct."
-        });
-    }
-});
-
-// Main POST handler for actions
+// Matches /admission-api POST
 apiRouter.post('/', async (req, res) => {
     const { action } = req.body;
-    if (!action) return res.status(400).json({ error: 'Missing action' });
+    if (!action) return res.status(400).json({ error: 'Action required' });
+
+    // Handle Setup/Installer specific actions first
+    if (action === 'test_db_connection') {
+        const { host, user, pass, name } = req.body;
+        try {
+            const testConn = await mysql.createConnection({ host, user, password: pass, database: name });
+            await testConn.end();
+            return res.json({ status: 'success' });
+        } catch (err) {
+            return res.status(500).json({ status: 'error', message: err.message });
+        }
+    }
+
+    if (action === 'perform_install') {
+        const { dbHost, dbUser, dbPass, dbName, adminUser, adminPass } = req.body;
+        try {
+            // 1. Re-test connection
+            const testPool = mysql.createPool({ host: dbHost, user: dbUser, password: dbPass, database: dbName, multipleStatements: true });
+            const conn = await testPool.getConnection();
+            
+            // 2. Run Schema
+            const schemaPath = path.join(__dirname, 'schema.sql');
+            if (fs.existsSync(schemaPath)) {
+                const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+                await conn.query(schemaSql);
+            }
+
+            // 3. Create Admin
+            await conn.execute(
+                'REPLACE INTO users (id, username, password, name, role, isActive) VALUES (?, ?, ?, ?, ?, ?)',
+                ['admin-init', adminUser, adminPass, 'Super Admin', 'SUPER_ADMIN', 1]
+            );
+            
+            conn.release();
+            await testPool.end();
+
+            // 4. Update .env file locally (optional but good for persistence)
+            const envContent = `DB_HOST=${dbHost}\nDB_USER=${dbUser}\nDB_PASSWORD=${dbPass}\nDB_NAME=${dbName}\nPORT=${port}`;
+            fs.writeFileSync(path.join(__dirname, '.env'), envContent);
+            
+            // 5. Update runtime process vars
+            process.env.DB_HOST = dbHost;
+            process.env.DB_USER = dbUser;
+            process.env.DB_PASSWORD = dbPass;
+            process.env.DB_NAME = dbName;
+            
+            // 6. Restart local pool
+            await initDbPool();
+            
+            return res.json({ status: 'success' });
+        } catch (err) {
+            return res.status(500).json({ status: 'error', message: err.message });
+        }
+    }
+
+    // Regular API check
+    if (!isConfigured || !pool) {
+        return res.status(503).json({ error: 'Database not initialized. Visit /installer.html' });
+    }
 
     try {
         switch (action) {
@@ -154,65 +201,45 @@ apiRouter.post('/', async (req, res) => {
                 res.status(400).json({ error: `Action '${action}' not supported` });
         }
     } catch (err) {
-        console.error('API Error:', err);
-        res.status(500).json({ error: 'Internal Server Error', message: err.message });
+        res.status(500).json({ error: 'API Error', message: err.message });
     }
 });
 
-// Mount the API Router explicitly
+// Mount API at /admission-api
 app.use('/admission-api', apiRouter);
 
-// 4. Static File Serving (Vite Build Output)
+// 4. Static File Handling
 const distPath = path.join(__dirname, 'dist');
+
+// Setup redirect middleware: If not configured, force redirect to installer
+app.get('/', (req, res, next) => {
+    if (!isConfigured) return res.redirect('/installer.html');
+    next();
+});
+
+// Explicit route for the installer script
+app.get('/installer.tsx', (req, res) => {
+    res.sendFile(path.join(__dirname, 'installer.tsx'));
+});
+
 if (fs.existsSync(distPath)) {
     app.use(express.static(distPath));
-    // SPA Fallback: Send all other requests to index.html
     app.get('*', (req, res) => {
-        // Only fallback if it's not trying to hit the API
-        if (req.originalUrl.startsWith('/admission-api')) {
-            return res.status(404).json({ error: 'API endpoint not found' });
-        }
+        if (req.originalUrl === '/installer.html') return res.sendFile(path.join(__dirname, 'installer.html'));
+        if (req.originalUrl.startsWith('/admission-api')) return res.status(404).json({ error: 'API path not found' });
+        if (!isConfigured) return res.redirect('/installer.html');
         res.sendFile(path.join(distPath, 'index.html'));
     });
 } else {
-    // Basic root handler if dist is missing (useful during initial deployment)
     app.get('/', (req, res) => {
-        res.status(200).send(`
-            <h1>EHA CRM Backend</h1>
-            <p>Status: Running</p>
-            <p>API Endpoint: <a href="/admission-api">/admission-api</a></p>
-            <hr>
-            <p style="color:red">Warning: 'dist' folder not found. Please run 'npm run build' locally and upload the folder.</p>
-        `);
+        if (!isConfigured) return res.redirect('/installer.html');
+        res.send('Backend Active. Dashboard not built.');
     });
+    app.get('/installer.html', (req, res) => res.sendFile(path.join(__dirname, 'installer.html')));
 }
 
-// 5. Database Initialization (Seeder)
-async function dbInit() {
-    try {
-        const schemaPath = path.join(__dirname, 'schema.sql');
-        if (!fs.existsSync(schemaPath)) return;
-        const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-        const statements = schemaSql.split(/;\s*$/m).map(s => s.trim()).filter(s => s.length > 0 && !s.startsWith('--'));
-        const conn = await pool.getConnection();
-        for (let statement of statements) {
-            try { 
-                await conn.query(statement); 
-            } catch (e) {
-                if (!e.message.includes('already exists') && !e.message.includes('Duplicate entry')) {
-                    console.error('DB Init Warning:', e.message);
-                }
-            }
-        }
-        conn.release();
-        console.log('Database schema verified/initialized.');
-    } catch (err) {
-        console.error('Database initialization failed:', err.message);
-    }
-}
-
-// 6. Start Server
-app.listen(port, () => {
-    console.log(`Server process started on port ${port}`);
-    dbInit();
+// 6. Listen
+app.listen(port, async () => {
+    console.log(`Server running on port ${port}`);
+    await initDbPool();
 });
