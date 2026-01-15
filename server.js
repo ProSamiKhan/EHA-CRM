@@ -8,14 +8,14 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Enable CORS and JSON parsing
+// Middleware
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Request logger for debugging
+// Request logger
 app.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
     next();
 });
 
@@ -25,35 +25,28 @@ const dbConfig = {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    ssl: {
-        rejectUnauthorized: false
-    }
+    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
 };
 
 async function getConn() {
     try {
-        return await mysql.createConnection(dbConfig);
+        const connection = await mysql.createConnection(dbConfig);
+        return connection;
     } catch (err) {
-        console.error('DATABASE CONNECTION FAILED:', err.message);
+        console.error('DATABASE CONNECTION ERROR:', err.message);
         throw err;
     }
 }
 
-// Health check / Test route
-app.get('/api-status', (req, res) => {
-    res.json({ status: 'online', timestamp: Date.now(), message: 'Admission CRM API is active' });
-});
-
-// Main API Handler - using a more unique path to avoid Hostinger routing conflicts
-const API_PATH = '/api-v1-admission';
+// API Route - Standardized to /api-server
+const API_PATH = '/api-server';
 
 app.post(API_PATH, async (req, res) => {
     const { action } = req.body;
     let conn;
     
     if (!action) {
-        console.warn('API Call received without action');
-        return res.status(400).json({ error: 'Missing action in request body' });
+        return res.status(400).json({ error: 'Missing action' });
     }
 
     try {
@@ -61,14 +54,21 @@ app.post(API_PATH, async (req, res) => {
         
         switch (action) {
             case 'login':
-                console.log('Login attempt:', req.body.username);
-                const [users] = await conn.execute('SELECT * FROM users WHERE username = ? AND isActive = 1', [req.body.username]);
+                console.log(`Login attempt for username: ${req.body.username}`);
+                const [users] = await conn.execute(
+                    'SELECT * FROM users WHERE username = ? AND isActive = 1', 
+                    [req.body.username]
+                );
+                
                 const user = users[0];
                 if (user && user.password === req.body.password) {
-                    delete user.password;
-                    res.json({ status: 'success', user });
+                    console.log(`Login successful for: ${user.username}`);
+                    const responseUser = { ...user };
+                    delete responseUser.password;
+                    res.json({ status: 'success', user: responseUser });
                 } else {
-                    res.status(401).json({ error: 'Invalid credentials' });
+                    console.warn(`Login failed for: ${req.body.username}`);
+                    res.status(401).json({ error: 'Invalid username or password' });
                 }
                 break;
 
@@ -144,30 +144,32 @@ app.post(API_PATH, async (req, res) => {
                 break;
 
             default:
-                res.status(400).json({ error: 'Invalid action provided' });
+                res.status(400).json({ error: 'Invalid action' });
         }
     } catch (err) {
         console.error('API Error:', err);
-        res.status(500).json({ error: 'Server Internal Error', message: err.message });
+        res.status(500).json({ error: 'Internal Server Error', message: err.message });
     } finally {
         if (conn) await conn.end();
     }
 });
 
-// Serve static files from the 'dist' directory
+// Serve Static Files
 const distPath = path.join(__dirname, 'dist');
 app.use(express.static(distPath));
 
-// Catch-all route for SPA
+// Health Check
+app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+
+// Catch-all for SPA
 app.get('*', (req, res) => {
-    // Prevent catch-all from eating API-like requests that aren't matched
-    if (req.url.startsWith('/api')) {
+    if (req.url.startsWith('/api-')) {
         return res.status(404).json({ error: 'API endpoint not found' });
     }
     res.sendFile(path.join(distPath, 'index.html'));
 });
 
 app.listen(port, () => {
-    console.log(`Server is running at http://localhost:${port}`);
-    console.log(`API Path: ${API_PATH}`);
+    console.log(`Server running on port ${port}`);
+    console.log(`API endpoint active at: ${API_PATH}`);
 });

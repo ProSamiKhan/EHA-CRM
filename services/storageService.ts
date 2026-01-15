@@ -1,7 +1,7 @@
 
 import { Candidate, Batch, User, UserRole, AuditLog } from '../types';
 
-const API_URL = '/api-v1-admission';
+const API_URL = '/api-server';
 
 async function fetchApi(action: string, method: 'GET' | 'POST' = 'POST', body?: any) {
   try {
@@ -14,7 +14,7 @@ async function fetchApi(action: string, method: 'GET' | 'POST' = 'POST', body?: 
     const response = await fetch(API_URL, options);
     if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || `Network error: ${response.status}`);
+        throw new Error(errData.error || `Server error: ${response.status}`);
     }
     return await response.json();
   } catch (error) {
@@ -25,7 +25,7 @@ async function fetchApi(action: string, method: 'GET' | 'POST' = 'POST', body?: 
 
 export class StorageService {
   static async init() {
-    console.log("Database connection initialized via Node.js");
+    console.log("Storage service initialized with endpoint:", API_URL);
   }
 
   static async getUsers(): Promise<User[]> {
@@ -65,6 +65,6 @@ export class StorageService {
   }
 
   static logAudit(log: any) {
-    console.log("Audit log saved to DB", log);
+    console.log("Audit log tracked locally", log);
   }
 }

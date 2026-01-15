@@ -4,7 +4,7 @@ import { User } from '../types';
 export class AuthService {
   static async login(username: string, password: string): Promise<User | null> {
     try {
-      const response = await fetch('/api-v1-admission', {
+      const response = await fetch('/api-server', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'login', username, password })
@@ -16,15 +16,19 @@ export class AuthService {
           localStorage.setItem('crm_session', JSON.stringify(data.user));
           return data.user;
         }
+      } else if (response.status === 401) {
+        console.warn("Authentication failed: Invalid credentials");
+        throw new Error("Invalid username or password");
+      } else {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Server returned ${response.status}`);
       }
       
-      // Clear session if login fails
-      localStorage.removeItem('crm_session');
       return null;
-    } catch (e) {
-      console.error("Login request failed", e);
+    } catch (e: any) {
+      console.error("Login Error:", e.message);
       localStorage.removeItem('crm_session');
-      return null;
+      throw e;
     }
   }
 
@@ -38,7 +42,6 @@ export class AuthService {
       if (!session) return null;
       
       const user = JSON.parse(session);
-      // Basic validation to ensure the object is a valid User
       if (user && user.id && user.role) {
         return user;
       }

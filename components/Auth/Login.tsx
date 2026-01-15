@@ -19,17 +19,21 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setError('');
     
     try {
-      // The critical fix: we must await the async login call
       const user = await AuthService.login(username, password);
-      
       if (user) {
         onLogin(user);
       } else {
         setError('Invalid username or password');
       }
-    } catch (err) {
-      setError('Connection error. Please try again.');
-      console.error('Login error:', err);
+    } catch (err: any) {
+      if (err.message.includes('401') || err.message.toLowerCase().includes('invalid')) {
+        setError('Invalid username or password. Please check your credentials.');
+      } else if (err.message.includes('404')) {
+        setError('Connection Error: API endpoint not found. Please rebuild and redeploy.');
+      } else {
+        setError(`System Error: ${err.message || 'Please check your database connection.'}`);
+      }
+      console.error('Detailed Login Error:', err);
     } finally {
       setIsLoading(false);
     }
@@ -57,7 +61,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 type="text"
                 required
                 className="block w-full pl-10 pr-3 py-3 bg-stone-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-stone-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                placeholder="Enter ID"
+                placeholder="Enter Username (e.g. admin)"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
               />
@@ -82,9 +86,12 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
           </div>
 
           {error && (
-            <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm p-3 rounded-xl border border-red-100 dark:border-red-900/50 flex items-center gap-2">
-              <i className="fa-solid fa-circle-exclamation"></i>
-              {error}
+            <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm p-3 rounded-xl border border-red-100 dark:border-red-900/50 flex flex-col gap-1">
+              <div className="flex items-center gap-2 font-bold">
+                <i className="fa-solid fa-circle-exclamation"></i>
+                <span>Login Failed</span>
+              </div>
+              <p className="opacity-90">{error}</p>
             </div>
           )}
 
@@ -98,7 +105,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
         </form>
 
         <div className="mt-8 pt-6 border-t border-stone-100 dark:border-slate-800 text-center">
-          <p className="text-xs text-slate-400 dark:text-slate-500 uppercase tracking-widest font-bold">Secure Access Portal</p>
+          <p className="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-widest font-bold">Secure Access Portal • v1.2.1</p>
         </div>
       </div>
     </div>
