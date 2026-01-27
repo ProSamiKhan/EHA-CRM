@@ -7,29 +7,33 @@ const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
-// Hostinger provides the port via process.env.PORT
+// Hostinger provides the port via process.env.PORT. This is critical.
 const port = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// 1. ABSOLUTE PRIORITY ROUTES (No middleware interference)
+// 1. HEALTH CHECK / STATUS
 app.get('/api-status', (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.status(200).send(JSON.stringify({ 
         status: 'active', 
-        message: 'Node.js is responding',
-        timestamp: Date.now()
+        engine: 'Node.js ' + process.version,
+        time: new Date().toISOString(),
+        env: process.env.NODE_ENV || 'production'
     }));
 });
 
-// 2. Database State
+// 2. Database State & Pool
 let pool = null;
 let isConfigured = false;
 
 async function initDbPool() {
     const { DB_HOST, DB_USER, DB_PASSWORD, DB_NAME } = process.env;
-    if (!DB_NAME || !DB_USER) return false;
+    if (!DB_NAME || !DB_USER) {
+        console.warn(">> Database env variables not fully set. Waiting for installer.");
+        return false;
+    }
     try {
         pool = mysql.createPool({
             host: DB_HOST || 'localhost',
@@ -37,13 +41,14 @@ async function initDbPool() {
             password: DB_PASSWORD,
             database: DB_NAME,
             waitForConnections: true,
-            connectionLimit: 5
+            connectionLimit: 5,
+            multipleStatements: true
         });
         const conn = await pool.getConnection();
         const [rows] = await conn.execute('SHOW TABLES LIKE "users"');
         conn.release();
         isConfigured = rows.length > 0;
-        console.log(">> DB Connected");
+        console.log(">> Database connected and checked.");
         return true;
     } catch (e) {
         console.error(">> DB Error:", e.message);
@@ -51,14 +56,16 @@ async function initDbPool() {
     }
 }
 
-// 3. API Handler Function
-const apiHandler = async (req, res) => {
+// 3. API Router
+const apiRouter = express.Router();
+
+apiRouter.all('/', async (req, res) => {
     if (req.method === 'GET') {
-        return res.json({ status: 'online', configured: isConfigured });
+        return res.json({ status: 'API Online', configured: isConfigured });
     }
 
     const { action } = req.body;
-    if (!action) return res.status(400).json({ error: 'Action missing' });
+    if (!action) return res.status(400).json({ error: 'Action parameter missing' });
 
     try {
         if (action === 'test_db_connection') {
@@ -86,7 +93,7 @@ const apiHandler = async (req, res) => {
             return res.json({ status: 'success' });
         }
 
-        if (!isConfigured || !pool) return res.status(503).json({ error: 'DB not ready' });
+        if (!isConfigured || !pool) return res.status(503).json({ error: 'Database not configured. Visit /installer.html' });
 
         switch (action) {
             case 'login':
@@ -95,7 +102,7 @@ const apiHandler = async (req, res) => {
                     const u = { ...users[0] }; delete u.password;
                     return res.json({ status: 'success', user: u });
                 }
-                return res.status(401).json({ error: 'Invalid' });
+                return res.status(401).json({ error: 'Invalid credentials' });
             
             case 'get_candidates':
                 const [candidates] = await pool.execute('SELECT * FROM candidates ORDER BY createdAt DESC');
@@ -122,36 +129,57 @@ const apiHandler = async (req, res) => {
                 const [batches] = await pool.execute('SELECT * FROM batches');
                 return res.json(batches);
 
+            case 'save_batch':
+                const b = req.body.batch;
+                await pool.execute('REPLACE INTO batches (id, name, maxSeats, createdAt) VALUES (?, ?, ?, ?)', [b.id, b.name, b.maxSeats, b.createdAt]);
+                return res.json({ status: 'success' });
+
             case 'get_users':
                 const [ul] = await pool.execute('SELECT id, username, name, role, isActive FROM users');
                 return res.json(ul);
 
+            case 'save_user':
+                const u = req.body.user;
+                const p = req.body.password;
+                if (p) {
+                    await pool.execute('REPLACE INTO users (id, username, password, name, role, isActive) VALUES (?, ?, ?, ?, ?, ?)', [u.id, u.username, p, u.name, u.role, u.isActive ? 1 : 0]);
+                } else {
+                    await pool.execute('UPDATE users SET name=?, role=?, isActive=? WHERE id=?', [u.name, u.role, u.isActive ? 1 : 0, u.id]);
+                }
+                return res.json({ status: 'success' });
+
             default: 
-                return res.status(404).json({ error: 'Action unknown' });
+                return res.status(404).json({ error: 'Unknown action' });
         }
     } catch (e) {
+        console.error("API Error:", e);
         return res.status(500).json({ error: e.message });
     }
-};
+});
 
-app.all('/api-v1', apiHandler);
-app.all('/api-v1/*', apiHandler);
+app.use('/api-v1', apiRouter);
 
-// 4. Static Files & SPA Logic
+// 4. SERVE STATIC FILES
 const buildPath = path.join(__dirname, 'build');
 app.use(express.static(buildPath));
 
+// Route for Installer specifically
+app.get('/installer.html', (req, res) => {
+    res.sendFile(path.join(buildPath, 'installer.html'));
+});
+
+// SPA Catch-all
 app.get('*', (req, res) => {
-    // DO NOT allow index.html to serve for API paths
+    // Avoid serving index.html for API paths if they weren't matched
     if (req.url.startsWith('/api-v1') || req.url === '/api-status') {
-        return res.status(404).json({ error: 'API route not matched' });
+        return res.status(404).json({ error: 'Not found' });
     }
     
     const indexPath = path.join(buildPath, 'index.html');
     if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
     } else {
-        res.status(404).send('Application build not found. Please run build script.');
+        res.status(404).send("Application files are building or were not found. Please try again in a minute.");
     }
 });
 

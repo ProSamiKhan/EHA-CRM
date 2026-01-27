@@ -2,14 +2,12 @@
 RewriteEngine On
 RewriteBase /
 
-# 1. Allow access to physical files (CSS, JS, Images, Installer)
+# 1. If it's a real file or directory, serve it directly (for JS/CSS/Images in build)
 RewriteCond %{REQUEST_FILENAME} -f [OR]
 RewriteCond %{REQUEST_FILENAME} -d
 RewriteRule ^ - [L]
 
-# 2. Specifically ensure API routes are NOT handled as files/folders
-# This helps Hostinger's Node.js proxy catch these specific paths
-RewriteRule ^(api-v1|api-status) - [L]
-
-# 3. SPA Routing: Map all other requests to index.html
-RewriteRule ^ index.html [L]
+# 2. Redirect EVERYTHING else to the Node.js app.
+# Note: On some Hostinger plans, the proxying is automatic if 'server.js' is started.
+# But this rule helps ensure the SPA routes work correctly.
+RewriteRule ^(.*)$ index.html [L]
