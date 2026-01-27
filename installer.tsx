@@ -19,7 +19,8 @@ const Installer: React.FC = () => {
     adminPass: ''
   });
 
-  const API_URL = '/_api_';
+  // Use the new API path
+  const API_URL = '/api-v1';
 
   useEffect(() => {
     checkServer();
@@ -28,17 +29,26 @@ const Installer: React.FC = () => {
   const checkServer = async () => {
     setServerStatus('checking');
     try {
-      const res = await fetch(API_URL);
+      // First try the specialized status endpoint
+      const res = await fetch('/api-status');
       if (res.ok) {
+        setServerStatus('online');
+        setServerError('');
+        return;
+      }
+      
+      // Fallback to main API endpoint
+      const res2 = await fetch(API_URL);
+      if (res2.ok) {
         setServerStatus('online');
         setServerError('');
       } else {
         setServerStatus('offline');
-        setServerError(`HTTP ${res.status}: ${res.statusText}`);
+        setServerError(`HTTP ${res2.status}: ${res2.statusText}`);
       }
     } catch (e: any) {
       setServerStatus('offline');
-      setServerError(e.message || 'Connection Refused. Is the Node.js app started?');
+      setServerError(e.message || 'Network error: Server unreachable.');
     }
   };
 
@@ -107,16 +117,19 @@ const Installer: React.FC = () => {
                 <p className="text-slate-400 text-xs font-bold">English House Academy</p>
                 </div>
             </div>
-            <button 
-                onClick={checkServer}
-                className={`px-3 py-1 rounded-full text-[10px] font-black uppercase transition-all ${
-                    serverStatus === 'online' ? 'bg-emerald-500/20 text-emerald-400' : 
-                    serverStatus === 'checking' ? 'bg-slate-500/20 text-slate-400' : 
-                    'bg-rose-500/20 text-rose-400 animate-pulse'
-                }`}
-            >
-                {serverStatus === 'online' ? '● Online' : serverStatus === 'checking' ? 'Checking...' : '● Offline'}
-            </button>
+            <div className="flex flex-col items-end gap-1">
+                <button 
+                    onClick={checkServer}
+                    className={`px-3 py-1 rounded-full text-[10px] font-black uppercase transition-all ${
+                        serverStatus === 'online' ? 'bg-emerald-500/20 text-emerald-400' : 
+                        serverStatus === 'checking' ? 'bg-slate-500/20 text-slate-400' : 
+                        'bg-rose-500/20 text-rose-400 animate-pulse'
+                    }`}
+                >
+                    {serverStatus === 'online' ? '● Online' : serverStatus === 'checking' ? 'Checking...' : '● Offline'}
+                </button>
+                <button onClick={checkServer} className="text-[9px] text-slate-500 hover:text-white underline">Retry Sync</button>
+            </div>
           </div>
         </div>
 
@@ -125,14 +138,15 @@ const Installer: React.FC = () => {
             <div className="mb-6 p-4 bg-rose-50 border border-rose-100 text-rose-600 rounded-2xl text-xs flex flex-col gap-2">
               <div className="flex items-center gap-2 font-bold">
                 <i className="fa-solid fa-triangle-exclamation"></i>
-                <span>SERVER CONNECTION FAILED</span>
+                <span>BACKEND NOT RESPONDING</span>
               </div>
-              <p className="opacity-80">Reason: {serverError}</p>
-              <p className="mt-2 font-bold text-[10px] uppercase">Solution:</p>
-              <ul className="list-disc list-inside opacity-70">
-                <li>Check if Node.js app is "Started" in Hostinger dashboard.</li>
-                <li>Ensure "Application Entry Point" is set to "server.js".</li>
-                <li>Wait 30 seconds after starting for it to warm up.</li>
+              <p className="opacity-80 font-mono">Status: {serverError}</p>
+              <p className="mt-2 font-bold text-[10px] uppercase border-t border-rose-200 pt-2">Checklist for Hostinger:</p>
+              <ul className="list-disc list-inside opacity-70 space-y-1">
+                <li>Go to <strong>Node.js</strong> section in hPanel.</li>
+                <li>Make sure Application Status is <strong>"Started"</strong>.</li>
+                <li>Verify <strong>Application URL</strong> matches your domain exactly.</li>
+                <li>Check <strong>"Application Entry Point"</strong> is set to <code>server.js</code>.</li>
               </ul>
             </div>
           )}
@@ -161,7 +175,11 @@ const Installer: React.FC = () => {
               </div>
 
               <div className="pt-4 flex items-center justify-between">
-                <button onClick={testConnection} className="text-indigo-600 font-bold px-4 py-2 bg-indigo-50 rounded-xl hover:bg-indigo-100 transition-all">
+                <button 
+                    onClick={testConnection} 
+                    disabled={serverStatus !== 'online'}
+                    className="text-indigo-600 font-bold px-4 py-2 bg-indigo-50 rounded-xl hover:bg-indigo-100 transition-all disabled:opacity-30"
+                >
                   Test Connection
                 </button>
                 <button onClick={() => setStep(2)} disabled={dbStatus !== 'success' || serverStatus !== 'online'} className="bg-slate-900 text-white px-8 py-3 rounded-xl font-bold disabled:opacity-30">

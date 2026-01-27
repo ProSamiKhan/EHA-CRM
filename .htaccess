@@ -2,12 +2,11 @@
 RewriteEngine On
 RewriteBase /
 
-# 1. Bypass rules for existing files (like installer.html)
+# 1. Direct access to installer and other static files
 RewriteCond %{REQUEST_FILENAME} -f [OR]
 RewriteCond %{REQUEST_FILENAME} -d
 RewriteRule ^ - [L]
 
-# 2. Redirect EVERYTHING else to Node.js (assuming it's on port 3000 or handled by Hostinger's Proxy)
-# If Hostinger's Node.js Selector is active, it usually maps the domain to the app automatically.
-# This rule is a safety net for SPA routing.
+# 2. Map all non-file requests to index.html (SPA)
+# Hostinger's Node.js proxy will catch the /api-v1 routes if configured.
 RewriteRule ^ index.html [L]

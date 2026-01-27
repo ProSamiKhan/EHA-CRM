@@ -7,17 +7,21 @@ const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
+// Hostinger uses process.env.PORT automatically
 const port = process.env.PORT || 3000;
-
-// Log to console for Hostinger logs
-console.log(`[${new Date().toISOString()}] CRM Backend initializing on port ${port}`);
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// 1. Health Check & Debugging (Highest Priority)
-app.get('/ping', (req, res) => {
-    res.status(200).send('pong');
+// Logging middleware to help debug in Hostinger logs
+app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    next();
+});
+
+// 1. Root Test Route - check if node is reachable at all
+app.get('/api-status', (req, res) => {
+    res.status(200).json({ status: 'active', message: 'Node.js is responding' });
 });
 
 // 2. Database Connection
@@ -40,22 +44,28 @@ async function initDbPool() {
         const [rows] = await conn.execute('SHOW TABLES LIKE "users"');
         conn.release();
         isConfigured = rows.length > 0;
-        console.log(">> DB Connected & Verified");
+        console.log(">> Database Connected Successfully");
         return true;
     } catch (e) {
-        console.error(">> DB Connection Failed:", e.message);
+        console.error(">> Database Connection Error:", e.message);
         return false;
     }
 }
 
-// 3. API Handler
+// 3. Main API Handler
 const apiHandler = async (req, res) => {
+    // Return status on GET
     if (req.method === 'GET') {
-        return res.json({ status: 'online', configured: isConfigured, time: Date.now() });
+        return res.json({ 
+            status: 'online', 
+            configured: isConfigured, 
+            version: '1.2.5',
+            node_env: process.env.NODE_ENV || 'production'
+        });
     }
 
     const { action } = req.body;
-    if (!action) return res.status(400).json({ error: 'Action missing' });
+    if (!action) return res.status(400).json({ error: 'No action specified' });
 
     try {
         if (action === 'test_db_connection') {
@@ -83,7 +93,7 @@ const apiHandler = async (req, res) => {
             return res.json({ status: 'success' });
         }
 
-        if (!isConfigured || !pool) return res.status(503).json({ error: 'DB not ready' });
+        if (!isConfigured || !pool) return res.status(503).json({ error: 'DB not configured' });
 
         switch (action) {
             case 'login':
@@ -92,7 +102,7 @@ const apiHandler = async (req, res) => {
                     const u = { ...users[0] }; delete u.password;
                     return res.json({ status: 'success', user: u });
                 }
-                return res.status(401).json({ error: 'Invalid' });
+                return res.status(401).json({ error: 'Unauthorized' });
             
             case 'get_candidates':
                 const [candidates] = await pool.execute('SELECT * FROM candidates ORDER BY createdAt DESC');
@@ -124,27 +134,29 @@ const apiHandler = async (req, res) => {
                 return res.json(ul);
 
             default: 
-                return res.status(404).json({ error: 'Not found' });
+                return res.status(404).json({ error: 'Action not found' });
         }
     } catch (e) {
         return res.status(500).json({ error: e.message });
     }
 };
 
-app.all('/_api_', apiHandler);
-app.all('/_api_/*', apiHandler);
+// Use api-v1 (cleaner URL)
+app.all('/api-v1', apiHandler);
+app.all('/api-v1/*', apiHandler);
 
-// 4. Static Files (Last Priority)
+// 4. Static Files
 const buildPath = path.join(__dirname, 'build');
 if (fs.existsSync(buildPath)) {
     app.use(express.static(buildPath));
+    // Serve index.html for all other routes to support SPA
     app.get('*', (req, res) => {
-        if (req.url.startsWith('/_api_') || req.url === '/ping') return;
+        if (req.url.startsWith('/api-v1') || req.url === '/api-status') return;
         res.sendFile(path.join(buildPath, 'index.html'));
     });
 }
 
 app.listen(port, '0.0.0.0', async () => {
-    console.log(`>> Server listening on ${port}`);
+    console.log(`>> Server listening on port ${port}`);
     await initDbPool();
 });

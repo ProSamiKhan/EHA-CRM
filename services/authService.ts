@@ -15,7 +15,7 @@ export class AuthService {
       throw new Error("Invalid demo credentials");
     }
 
-    const response = await fetch('/_api_', {
+    const response = await fetch('/api-v1', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'login', username, password })
