@@ -1,17 +1,11 @@
 
+# Standard Hostinger Node.js configuration
+# Node Selector usually handles routing, so we only need basics here.
+Options -MultiViews
 RewriteEngine On
-RewriteBase /
 
-# 1. Direct all API traffic to the dynamic port (internally handled by Node Selector)
-# If the Node Selector is set to server.js, Hostinger should handle this.
-# This rule is a safety fallback for manual proxying.
-RewriteCond %{REQUEST_URI} ^/admission-api [NC]
-RewriteRule ^(.*)$ http://127.0.0.1:%{ENV:PORT}/$1 [P,L]
-
-# 2. Redirect to installer if not configured (Logic handled in server.js, but .htaccess can assist)
-# RewriteRule ^$ installer.html [L]
-
-# 3. Standard file serving for the SPA
+# Ensure the app handles all routing including SPA fallbacks
+# API requests should pass through to server.js
+# Static files should be served normally
 RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^(.*)$ index.html [L]
+RewriteRule ^ index.html [QSA,L]

@@ -17,13 +17,14 @@ const Installer: React.FC = () => {
     adminPass: ''
   });
 
-  // Helper to get consistent API URL
-  const API_URL = '/admission-api/';
+  // Use a relative path that works regardless of base URL
+  const API_URL = '/admission-api';
 
   const testConnection = async () => {
     setDbStatus('testing');
     setError('');
     try {
+      console.log("Testing connection to:", API_URL);
       const res = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -37,7 +38,7 @@ const Installer: React.FC = () => {
       });
       
       if (!res.ok) {
-        throw new Error(`Server error: ${res.status} ${res.statusText}`);
+        throw new Error(`Server returned ${res.status}: ${res.statusText}`);
       }
 
       const data = await res.json();
@@ -45,11 +46,11 @@ const Installer: React.FC = () => {
         setDbStatus('success');
       } else {
         setDbStatus('failed');
-        setError(data.error || data.message || 'Connection failed');
+        setError(data.error || 'Connection failed');
       }
     } catch (e: any) {
       setDbStatus('failed');
-      setError(`Setup API Error: ${e.message}`);
+      setError(`Setup API Error: ${e.message}. Check if your Node.js app is running.`);
     }
   };
 
@@ -64,14 +65,14 @@ const Installer: React.FC = () => {
       });
       
       if (!res.ok) {
-        throw new Error(`Installation failed: ${res.status}`);
+        throw new Error(`Installation failed with status ${res.status}`);
       }
 
       const data = await res.json();
       if (data.status === 'success') {
         setStep(4);
       } else {
-        setError(data.error || data.message || 'Installation failed');
+        setError(data.error || 'Installation failed');
       }
     } catch (e: any) {
       setError(`Installation request failed: ${e.message}`);
@@ -106,7 +107,10 @@ const Installer: React.FC = () => {
           {error && (
             <div className="mb-6 p-4 bg-rose-50 border border-rose-100 text-rose-600 rounded-2xl text-sm flex gap-3 items-center">
               <i className="fa-solid fa-circle-exclamation text-lg"></i>
-              <p className="font-medium">{error}</p>
+              <div className="flex-1">
+                <p className="font-bold">Error Detected</p>
+                <p className="opacity-80">{error}</p>
+              </div>
             </div>
           )}
 
@@ -119,7 +123,7 @@ const Installer: React.FC = () => {
               </div>
               
               <div className="grid grid-cols-1 gap-4">
-                <Input label="DB Host (e.g. localhost)" value={config.dbHost} onChange={v => setConfig({...config, dbHost: v})} />
+                <Input label="DB Host (usually localhost)" value={config.dbHost} onChange={v => setConfig({...config, dbHost: v})} />
                 <div className="grid grid-cols-2 gap-4">
                   <Input label="DB Username" value={config.dbUser} onChange={v => setConfig({...config, dbUser: v})} />
                   <Input label="DB Password" type="password" value={config.dbPass} onChange={v => setConfig({...config, dbPass: v})} />
@@ -201,7 +205,7 @@ const Input: React.FC<{ label: string, value: string, onChange: (v: string) => v
     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">{label}</label>
     <input 
       type={type}
-      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all"
+      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all dark:bg-slate-900 dark:text-white"
       value={value}
       onChange={e => onChange(e.target.value)}
     />
