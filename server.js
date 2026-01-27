@@ -43,20 +43,19 @@ async function initDbPool() {
     }
 }
 
-// 2. API Routes (MUST BE BEFORE STATIC FILES)
-app.use('/admission-api', async (req, res) => {
-    // Basic health check
+// 2. API Routes - DEFINED EXPLICITLY TO AVOID 404
+// This handles both /admission-api and /admission-api/
+const apiHandler = async (req, res) => {
     if (req.method === 'GET') {
-        return res.json({ status: 'online', db: isConfigured });
+        return res.json({ status: 'online', db: isConfigured, timestamp: Date.now() });
     }
 
     if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
 
     const { action } = req.body;
-    console.log(`>> [API REQUEST] Action: ${action}`);
+    console.log(`>> [API] Action: ${action}`);
 
     try {
-        // Installation actions (work even if DB not configured)
         if (action === 'test_db_connection') {
             const { host, user, pass, name } = req.body;
             const test = await mysql.createConnection({ host, user, password: pass, database: name });
@@ -83,9 +82,8 @@ app.use('/admission-api', async (req, res) => {
             return res.json({ status: 'success' });
         }
 
-        // Regular CRM actions (require DB)
         if (!isConfigured || !pool) {
-            return res.status(503).json({ error: 'Database not initialized. Please run /installer.html' });
+            return res.status(503).json({ error: 'Database not initialized.' });
         }
 
         switch (action) {
@@ -142,33 +140,35 @@ app.use('/admission-api', async (req, res) => {
             case 'delete_batch': await pool.execute('DELETE FROM batches WHERE id=?', [req.body.id]); return res.json({status:'success'});
             
             default: 
-                return res.status(400).json({ error: 'Unknown action: ' + action });
+                return res.status(400).json({ error: 'Unknown action' });
         }
     } catch (e) {
-        console.error(`!! [API] Action Error (${action}):`, e.message);
+        console.error(`!! [API] Error:`, e.message);
         return res.status(500).json({ error: e.message });
     }
-});
+};
+
+// Listen on both with and without trailing slash
+app.all('/admission-api', apiHandler);
+app.all('/admission-api/', apiHandler);
 
 // 3. Static Files Serving
 const buildPath = path.join(__dirname, 'build');
 if (fs.existsSync(buildPath)) {
     app.use(express.static(buildPath));
     
-    // Explicit route for setup page
     app.get('/installer.html', (req, res) => {
         res.sendFile(path.join(buildPath, 'installer.html'));
     });
 
-    // Default SPA fallback
     app.get('*', (req, res) => {
+        // Only serve index.html if it's not an API call
+        if (req.url.startsWith('/admission-api')) return;
         res.sendFile(path.join(buildPath, 'index.html'));
     });
-} else {
-    app.get('/', (req, res) => res.send('API is active. Build folder is missing. Run "npm run build".'));
 }
 
 app.listen(port, '0.0.0.0', async () => {
-    console.log(`>> [SERVER] Running at http://localhost:${port}`);
+    console.log(`>> [SERVER] Running on port ${port}`);
     await initDbPool();
 });

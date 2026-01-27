@@ -17,12 +17,14 @@ const Installer: React.FC = () => {
     adminPass: ''
   });
 
-  // Strict API path
-  const API_URL = '/admission-api';
+  // Use absolute path to ensure it reaches the backend
+  const API_URL = window.location.origin + '/admission-api';
 
   const testConnection = async () => {
     setDbStatus('testing');
     setError('');
+    console.log("Attempting to connect to:", API_URL);
+    
     try {
       const res = await fetch(API_URL, {
         method: 'POST',
@@ -37,7 +39,7 @@ const Installer: React.FC = () => {
       });
       
       if (!res.ok) {
-        throw new Error(`Connection Error: Server returned ${res.status} (${res.statusText})`);
+        throw new Error(`Server Response: ${res.status} ${res.statusText}`);
       }
 
       const data = await res.json();
@@ -45,11 +47,11 @@ const Installer: React.FC = () => {
         setDbStatus('success');
       } else {
         setDbStatus('failed');
-        setError(data.error || 'The database credentials seem incorrect.');
+        setError(data.error || 'Connection failed. Check DB details.');
       }
     } catch (e: any) {
       setDbStatus('failed');
-      setError(`Network Error: ${e.message}. Tip: Check if Node.js app is started in Hostinger dashboard.`);
+      setError(`Setup API Error: ${e.message}. If this is 404, check if your Node.js app is running and pointed to the correct directory.`);
     }
   };
 
@@ -63,16 +65,16 @@ const Installer: React.FC = () => {
         body: JSON.stringify({ action: 'perform_install', ...config })
       });
       
-      if (!res.ok) throw new Error(`Installation failed (${res.status})`);
+      if (!res.ok) throw new Error(`Status ${res.status}`);
 
       const data = await res.json();
       if (data.status === 'success') {
         setStep(4);
       } else {
-        setError(data.error || 'Failed to initialize database tables.');
+        setError(data.error || 'Installation failed.');
       }
     } catch (e: any) {
-      setError(`Request Failed: ${e.message}`);
+      setError(`Installation Failed: ${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -105,7 +107,7 @@ const Installer: React.FC = () => {
             <div className="mb-6 p-4 bg-rose-50 border border-rose-100 text-rose-600 rounded-2xl text-sm flex gap-3 items-center">
               <i className="fa-solid fa-circle-exclamation text-lg"></i>
               <div className="flex-1">
-                <p className="font-bold">Setup Issue</p>
+                <p className="font-bold">Error Detected</p>
                 <p className="opacity-80">{error}</p>
               </div>
             </div>
@@ -116,11 +118,11 @@ const Installer: React.FC = () => {
               <div className="text-center py-4">
                 <i className="fa-solid fa-database text-5xl text-slate-200 mb-4"></i>
                 <h3 className="text-lg font-bold text-slate-800">Database Configuration</h3>
-                <p className="text-slate-500 text-sm">Enter the credentials from your Hostinger MySQL Database.</p>
+                <p className="text-slate-500 text-sm">Enter your MySQL credentials from Hostinger.</p>
               </div>
               
               <div className="grid grid-cols-1 gap-4">
-                <Input label="Host (usually localhost)" value={config.dbHost} onChange={v => setConfig({...config, dbHost: v})} />
+                <Input label="DB Host (usually localhost)" value={config.dbHost} onChange={v => setConfig({...config, dbHost: v})} />
                 <div className="grid grid-cols-2 gap-4">
                   <Input label="DB Username" value={config.dbUser} onChange={v => setConfig({...config, dbUser: v})} />
                   <Input label="DB Password" type="password" value={config.dbPass} onChange={v => setConfig({...config, dbPass: v})} />
@@ -182,7 +184,7 @@ const Installer: React.FC = () => {
                 <i className="fa-solid fa-check-double"></i>
               </div>
               <h2 className="text-2xl font-black text-slate-900 mb-2">Setup Complete!</h2>
-              <p className="text-slate-500 mb-8 px-4">Database tables created. You can now start using the CRM.</p>
+              <p className="text-slate-500 mb-8 px-4">The database has been initialized. You can now log in to the system.</p>
               <a 
                 href="/" 
                 className="inline-block bg-slate-900 text-white px-10 py-4 rounded-2xl font-bold hover:bg-slate-800 transition-all shadow-xl"
