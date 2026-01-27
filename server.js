@@ -16,7 +16,10 @@ app.use(express.json({ limit: '50mb' }));
 app.get('/api-status', (req, res) => {
     const buildPath = path.resolve(__dirname, 'build');
     const buildExists = fs.existsSync(buildPath);
-    const buildFiles = buildExists ? fs.readdirSync(buildPath) : [];
+    let buildFiles = [];
+    if (buildExists) {
+        try { buildFiles = fs.readdirSync(buildPath); } catch (e) { buildFiles = [e.message]; }
+    }
     
     res.json({ 
         status: 'active', 
@@ -24,7 +27,8 @@ app.get('/api-status', (req, res) => {
         time: new Date().toISOString(),
         dir: __dirname,
         build_folder_exists: buildExists,
-        build_contents: buildFiles
+        build_contents: buildFiles,
+        env: process.env.NODE_ENV || 'production'
     });
 });
 
@@ -51,16 +55,15 @@ async function initDbPool() {
         isConfigured = rows.length > 0;
         return true;
     } catch (e) {
+        console.error("DB Pool Error:", e.message);
         return false;
     }
 }
 
 // 3. API ROUTES
 const apiRouter = express.Router();
-apiRouter.all('/', async (req, res) => {
+apiRouter.post('/', async (req, res) => {
     const { action } = req.body || {};
-    if (req.method === 'GET') return res.json({ status: 'API Online', configured: isConfigured });
-    
     try {
         if (action === 'test_db_connection') {
             const { host, user, pass, name } = req.body;
@@ -89,6 +92,7 @@ apiRouter.all('/', async (req, res) => {
 
         if (!isConfigured || !pool) return res.status(503).json({ error: 'Database not configured.' });
 
+        // Basic CRM Actions
         switch (action) {
             case 'login':
                 const [users] = await pool.execute('SELECT * FROM users WHERE username = ? AND isActive = 1', [req.body.username]);
@@ -101,11 +105,11 @@ apiRouter.all('/', async (req, res) => {
                 const [candidates] = await pool.execute('SELECT * FROM candidates ORDER BY createdAt DESC');
                 return res.json(candidates.map(r => ({
                     ...r, 
-                    personalDetails: JSON.parse(r.personalDetails),
-                    contactDetails: JSON.parse(r.contactDetails),
-                    addressDetails: JSON.parse(r.addressDetails),
-                    travelDetails: JSON.parse(r.travelDetails),
-                    paymentHistory: JSON.parse(r.paymentHistory)
+                    personalDetails: JSON.parse(r.personalDetails || '{}'),
+                    contactDetails: JSON.parse(r.contactDetails || '{}'),
+                    addressDetails: JSON.parse(r.addressDetails || '{}'),
+                    travelDetails: JSON.parse(r.travelDetails || '{}'),
+                    paymentHistory: JSON.parse(r.paymentHistory || '[]')
                 })));
             case 'get_batches':
                 const [batches] = await pool.execute('SELECT * FROM batches');
@@ -131,9 +135,16 @@ apiRouter.all('/', async (req, res) => {
 
 app.use('/api-v1', apiRouter);
 
-// 4. STATIC FILES 
+// 4. STATIC FILES (THE CRITICAL FIX)
 const buildPath = path.resolve(__dirname, 'build');
-app.use(express.static(buildPath));
+
+// Serve static assets with correct MIME types
+app.use(express.static(buildPath, {
+    setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.js')) res.setHeader('Content-Type', 'application/javascript');
+        if (filePath.endsWith('.css')) res.setHeader('Content-Type', 'text/css');
+    }
+}));
 
 // Specifically serve installer.html
 app.get('/installer.html', (req, res) => {
@@ -141,7 +152,7 @@ app.get('/installer.html', (req, res) => {
     if (fs.existsSync(filePath)) {
         res.sendFile(filePath);
     } else {
-        res.status(404).send(`Installer not found at ${filePath}. Check if build finished.`);
+        res.status(404).send("Build folder missing. Please wait for 'npm run build' to finish on Hostinger.");
     }
 });
 
@@ -152,11 +163,17 @@ app.get('*', (req, res) => {
     if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
     } else {
-        res.status(404).send(`Build folder is empty or not found. Make sure 'npm run build' was executed. Path: ${indexPath}`);
+        res.status(404).send(`
+            <h1>App is Building...</h1>
+            <p>The 'build' directory was not found yet. Hostinger is likely running 'npm run build' right now.</p>
+            <p>Please refresh in 1-2 minutes.</p>
+            <hr>
+            <small>Current Path: ${indexPath}</small>
+        `);
     }
 });
 
 app.listen(port, '0.0.0.0', async () => {
-    console.log(`>> Server listening on ${port}`);
+    console.log(`>> CRM Server started on port ${port}`);
     await initDbPool();
 });
