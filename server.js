@@ -28,9 +28,12 @@ const pool = mysql.createPool({
 app.get('/api-status', async (req, res) => {
     try {
         await pool.query('SELECT 1');
+        // Check if users table exists as a proxy for schema health
+        const [tables] = await pool.query("SHOW TABLES LIKE 'users'");
         res.json({ 
             status: 'active', 
             database: 'connected',
+            schema: tables.length > 0 ? 'ready' : 'missing_tables',
             time: new Date().toISOString()
         });
     } catch (err) {
@@ -48,8 +51,9 @@ app.post('/api-v1', async (req, res) => {
                 const [users] = await pool.query('SELECT id, username, name, role, isActive, password FROM users WHERE username = ? AND isActive = 1', [req.body.username]);
                 const user = users[0];
                 if (user && user.password === req.body.password) {
-                    delete user.password;
-                    return res.json({ status: 'success', user });
+                    const sessionUser = { ...user };
+                    delete sessionUser.password;
+                    return res.json({ status: 'success', user: sessionUser });
                 }
                 return res.status(401).json({ error: 'Invalid credentials' });
 
@@ -67,7 +71,7 @@ app.post('/api-v1', async (req, res) => {
 
             case 'save_candidate':
                 const c = req.body.candidate;
-                const query = `
+                const candQuery = `
                     INSERT INTO candidates (id, batchId, executiveId, status, paymentStatus, personalDetails, contactDetails, addressDetails, travelDetails, paymentHistory, createdAt, updatedAt)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON DUPLICATE KEY UPDATE 
@@ -76,7 +80,7 @@ app.post('/api-v1', async (req, res) => {
                     addressDetails=VALUES(addressDetails), travelDetails=VALUES(travelDetails),
                     paymentHistory=VALUES(paymentHistory), updatedAt=VALUES(updatedAt)
                 `;
-                await pool.query(query, [
+                await pool.query(candQuery, [
                     c.id, c.batchId, c.executiveId, c.status, c.paymentStatus,
                     JSON.stringify(c.personalDetails), JSON.stringify(c.contactDetails),
                     JSON.stringify(c.addressDetails), JSON.stringify(c.travelDetails),
@@ -93,15 +97,38 @@ app.post('/api-v1', async (req, res) => {
                 await pool.query('REPLACE INTO batches (id, name, maxSeats, createdAt) VALUES (?, ?, ?, ?)', [b.id, b.name, b.maxSeats, b.createdAt]);
                 return res.json({ status: 'success' });
 
+            case 'delete_batch':
+                await pool.query('DELETE FROM batches WHERE id = ?', [req.body.id]);
+                return res.json({ status: 'success' });
+
             case 'get_users':
                 const [allUsers] = await pool.query('SELECT id, username, name, role, isActive FROM users');
                 return res.json(allUsers);
 
+            case 'save_user':
+                const u = req.body.user;
+                const pass = req.body.password;
+                if (pass) {
+                    await pool.query('REPLACE INTO users (id, username, name, role, isActive, password) VALUES (?, ?, ?, ?, ?, ?)', 
+                        [u.id, u.username, u.name, u.role, u.isActive ? 1 : 0, pass]);
+                } else {
+                    await pool.query('UPDATE users SET name=?, role=?, isActive=? WHERE id=?', 
+                        [u.name, u.role, u.isActive ? 1 : 0, u.id]);
+                }
+                return res.json({ status: 'success' });
+
+            case 'delete_user':
+                await pool.query('DELETE FROM users WHERE id = ?', [req.body.id]);
+                return res.json({ status: 'success' });
+
             default:
-                return res.status(400).json({ error: 'Unknown action' });
+                return res.status(400).json({ error: 'Unknown action: ' + action });
         }
     } catch (err) {
-        console.error("API Error:", err);
+        console.error("API Error at " + action + ":", err);
+        if (err.code === 'ER_NO_SUCH_TABLE') {
+            return res.status(500).json({ error: "Database tables missing. Please run schema.sql in phpMyAdmin." });
+        }
         res.status(500).json({ error: err.message });
     }
 });
