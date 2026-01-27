@@ -2,13 +2,12 @@
 RewriteEngine On
 RewriteBase /
 
-# Force API calls directly to Node.js
-RewriteRule ^(_api_)($|/) - [L]
-
-# If file exists, serve it
+# 1. Bypass rules for existing files (like installer.html)
 RewriteCond %{REQUEST_FILENAME} -f [OR]
 RewriteCond %{REQUEST_FILENAME} -d
 RewriteRule ^ - [L]
 
-# Otherwise, hand over to index.html (SPA)
+# 2. Redirect EVERYTHING else to Node.js (assuming it's on port 3000 or handled by Hostinger's Proxy)
+# If Hostinger's Node.js Selector is active, it usually maps the domain to the app automatically.
+# This rule is a safety net for SPA routing.
 RewriteRule ^ index.html [L]

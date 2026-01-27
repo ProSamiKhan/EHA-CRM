@@ -9,13 +9,18 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-console.log('--- CRM BACKEND STARTING ---');
+// Log to console for Hostinger logs
+console.log(`[${new Date().toISOString()}] CRM Backend initializing on port ${port}`);
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// 1. Database Connection Logic
+// 1. Health Check & Debugging (Highest Priority)
+app.get('/ping', (req, res) => {
+    res.status(200).send('pong');
+});
+
+// 2. Database Connection
 let pool = null;
 let isConfigured = false;
 
@@ -29,30 +34,30 @@ async function initDbPool() {
             password: DB_PASSWORD,
             database: DB_NAME,
             waitForConnections: true,
-            connectionLimit: 10
+            connectionLimit: 5
         });
         const conn = await pool.getConnection();
         const [rows] = await conn.execute('SHOW TABLES LIKE "users"');
         conn.release();
         isConfigured = rows.length > 0;
+        console.log(">> DB Connected & Verified");
         return true;
     } catch (e) {
+        console.error(">> DB Connection Failed:", e.message);
         return false;
     }
 }
 
-// 2. CRITICAL: API Handler (Must be at the top)
+// 3. API Handler
 const apiHandler = async (req, res) => {
-    // Health Check
     if (req.method === 'GET') {
-        return res.json({ status: 'online', configured: isConfigured });
+        return res.json({ status: 'online', configured: isConfigured, time: Date.now() });
     }
 
     const { action } = req.body;
-    if (!action) return res.status(400).json({ error: 'No action provided' });
+    if (!action) return res.status(400).json({ error: 'Action missing' });
 
     try {
-        // Installation Routes
         if (action === 'test_db_connection') {
             const { host, user, pass, name } = req.body;
             const test = await mysql.createConnection({ host, user, password: pass, database: name });
@@ -78,21 +83,16 @@ const apiHandler = async (req, res) => {
             return res.json({ status: 'success' });
         }
 
-        // Check if DB is ready for other actions
-        if (!isConfigured || !pool) {
-            return res.status(503).json({ error: 'Database not set up' });
-        }
+        if (!isConfigured || !pool) return res.status(503).json({ error: 'DB not ready' });
 
-        // Main API Switch
         switch (action) {
             case 'login':
                 const [users] = await pool.execute('SELECT * FROM users WHERE username = ? AND isActive = 1', [req.body.username]);
                 if (users[0] && users[0].password === req.body.password) {
-                    const u = { ...users[0] };
-                    delete u.password;
+                    const u = { ...users[0] }; delete u.password;
                     return res.json({ status: 'success', user: u });
                 }
-                return res.status(401).json({ error: 'Invalid login' });
+                return res.status(401).json({ error: 'Invalid' });
             
             case 'get_candidates':
                 const [candidates] = await pool.execute('SELECT * FROM candidates ORDER BY createdAt DESC');
@@ -119,75 +119,32 @@ const apiHandler = async (req, res) => {
                 const [batches] = await pool.execute('SELECT * FROM batches');
                 return res.json(batches);
 
-            case 'save_batch':
-                const b = req.body.batch;
-                await pool.execute(
-                    'INSERT INTO batches (id, name, maxSeats, createdAt) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE name=VALUES(name), maxSeats=VALUES(maxSeats)',
-                    [b.id, b.name, b.maxSeats, b.createdAt || Date.now()]
-                );
-                return res.json({ status: 'success' });
-
-            case 'delete_batch':
-                await pool.execute('DELETE FROM batches WHERE id = ?', [req.body.id]);
-                return res.json({ status: 'success' });
-
             case 'get_users':
                 const [ul] = await pool.execute('SELECT id, username, name, role, isActive FROM users');
                 return res.json(ul);
 
-            case 'save_user':
-                const u = req.body.user;
-                const p = req.body.password;
-                if (p) {
-                    await pool.execute(
-                        'INSERT INTO users (id, username, password, name, role, isActive) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE username=VALUES(username), password=VALUES(password), name=VALUES(name), role=VALUES(role), isActive=VALUES(isActive)',
-                        [u.id, u.username, p, u.name, u.role, u.isActive ? 1 : 0]
-                    );
-                } else {
-                    await pool.execute(
-                        'INSERT INTO users (id, username, name, role, isActive) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE username=VALUES(username), name=VALUES(name), role=VALUES(role), isActive=VALUES(isActive)',
-                        [u.id, u.username, u.name, u.role, u.isActive ? 1 : 0]
-                    );
-                }
-                return res.json({ status: 'success' });
-
-            case 'delete_user':
-                await pool.execute('DELETE FROM users WHERE id = ?', [req.body.id]);
-                return res.json({ status: 'success' });
-
-            case 'get_audit_logs':
-                try {
-                    const [logs] = await pool.execute('SELECT * FROM audit_logs ORDER BY timestamp DESC');
-                    return res.json(logs);
-                } catch (e) {
-                    // Fallback if table doesn't exist yet
-                    return res.json([]);
-                }
-
             default: 
-                return res.status(404).json({ error: 'Action not found' });
+                return res.status(404).json({ error: 'Not found' });
         }
     } catch (e) {
         return res.status(500).json({ error: e.message });
     }
 };
 
-// Use a very simple, non-conflicting path
 app.all('/_api_', apiHandler);
 app.all('/_api_/*', apiHandler);
 
-// 3. Static Files
+// 4. Static Files (Last Priority)
 const buildPath = path.join(__dirname, 'build');
 if (fs.existsSync(buildPath)) {
     app.use(express.static(buildPath));
-    app.get('/installer.html', (req, res) => res.sendFile(path.join(buildPath, 'installer.html')));
     app.get('*', (req, res) => {
-        if (req.url.startsWith('/_api_')) return;
+        if (req.url.startsWith('/_api_') || req.url === '/ping') return;
         res.sendFile(path.join(buildPath, 'index.html'));
     });
 }
 
 app.listen(port, '0.0.0.0', async () => {
-    console.log(`>> Server awake on port ${port}`);
+    console.log(`>> Server listening on ${port}`);
     await initDbPool();
 });
