@@ -3,15 +3,19 @@ import { GoogleGenAI } from "@google/genai";
 import { Candidate } from "../types";
 
 export class AIService {
-  private static ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
-
   static async analyzeCandidate(candidate: Candidate): Promise<string> {
-    if (!process.env.API_KEY) {
+    // Guidelines: Always use new GoogleGenAI({apiKey: process.env.API_KEY})
+    // Note: process.env.API_KEY must be defined in your environment
+    const apiKey = process.env.API_KEY;
+    
+    if (!apiKey) {
       throw new Error("AI Features are disabled. Please add API_KEY in environment variables.");
     }
 
+    const ai = new GoogleGenAI({ apiKey });
+
     try {
-      const response = await this.ai.models.generateContent({
+      const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: `Analyze this student admission record for English House Academy:
           Name: ${candidate.personalDetails.fullName}
@@ -30,6 +34,9 @@ export class AIService {
       return response.text || "Could not generate analysis.";
     } catch (error: any) {
       console.error("AI Analysis failed:", error);
+      if (error.message?.includes("entity was not found")) {
+        return "AI Error: Model or API Key configuration issue. Please check your environment variables.";
+      }
       return "AI Service is temporarily unavailable.";
     }
   }
