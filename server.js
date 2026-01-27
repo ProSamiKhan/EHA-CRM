@@ -12,13 +12,19 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// 1. HEALTH CHECK
+// 1. HEALTH CHECK & DEBUG
 app.get('/api-status', (req, res) => {
+    const buildPath = path.resolve(__dirname, 'build');
+    const buildExists = fs.existsSync(buildPath);
+    const buildFiles = buildExists ? fs.readdirSync(buildPath) : [];
+    
     res.json({ 
         status: 'active', 
         engine: 'Node.js ' + process.version,
         time: new Date().toISOString(),
-        dir: __dirname
+        dir: __dirname,
+        build_folder_exists: buildExists,
+        build_contents: buildFiles
     });
 });
 
@@ -45,7 +51,6 @@ async function initDbPool() {
         isConfigured = rows.length > 0;
         return true;
     } catch (e) {
-        console.error("DB Init Error:", e.message);
         return false;
     }
 }
@@ -84,7 +89,6 @@ apiRouter.all('/', async (req, res) => {
 
         if (!isConfigured || !pool) return res.status(503).json({ error: 'Database not configured.' });
 
-        // Basic CRM Actions
         switch (action) {
             case 'login':
                 const [users] = await pool.execute('SELECT * FROM users WHERE username = ? AND isActive = 1', [req.body.username]);
@@ -109,6 +113,15 @@ apiRouter.all('/', async (req, res) => {
             case 'get_users':
                 const [ul] = await pool.execute('SELECT id, username, name, role, isActive FROM users');
                 return res.json(ul);
+            case 'save_candidate':
+                const d = req.body.candidate;
+                await pool.execute(
+                    `INSERT INTO candidates (id, batchId, executiveId, status, paymentStatus, personalDetails, contactDetails, addressDetails, travelDetails, paymentHistory, createdAt, updatedAt) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     ON DUPLICATE KEY UPDATE batchId=VALUES(batchId), status=VALUES(status), paymentStatus=VALUES(paymentStatus), personalDetails=VALUES(personalDetails), contactDetails=VALUES(contactDetails), addressDetails=VALUES(addressDetails), travelDetails=VALUES(travelDetails), paymentHistory=VALUES(paymentHistory), updatedAt=VALUES(updatedAt)`,
+                    [d.id, d.batchId, d.executiveId, d.status, d.paymentStatus, JSON.stringify(d.personalDetails), JSON.stringify(d.contactDetails), JSON.stringify(d.addressDetails), JSON.stringify(d.travelDetails), JSON.stringify(d.paymentHistory), d.createdAt || Date.now(), Date.now()]
+                );
+                return res.json({ status: 'success' });
             default: return res.status(404).json({ error: 'Action not found' });
         }
     } catch (e) {
@@ -118,41 +131,32 @@ apiRouter.all('/', async (req, res) => {
 
 app.use('/api-v1', apiRouter);
 
-// 4. STATIC FILES (THE FIX)
-// Serve build folder with explicit absolute path
+// 4. STATIC FILES 
 const buildPath = path.resolve(__dirname, 'build');
-
-// Check if build folder exists
-if (!fs.existsSync(buildPath)) {
-    console.error("FATAL: 'build' directory NOT FOUND at " + buildPath);
-}
-
 app.use(express.static(buildPath));
 
-// Specifically serve installer.html if requested
+// Specifically serve installer.html
 app.get('/installer.html', (req, res) => {
     const filePath = path.join(buildPath, 'installer.html');
     if (fs.existsSync(filePath)) {
         res.sendFile(filePath);
     } else {
-        res.status(404).send("Installer file not found in build directory.");
+        res.status(404).send(`Installer not found at ${filePath}. Check if build finished.`);
     }
 });
 
-// SPA Catch-all (MUST be the last route)
+// SPA Catch-all
 app.get('*', (req, res) => {
-    // Don't intercept API calls
     if (req.url.startsWith('/api-v1') || req.url === '/api-status') return;
-
     const indexPath = path.join(buildPath, 'index.html');
     if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
     } else {
-        res.status(404).send(`Application UI not found. Build may have failed or output directory is wrong. Path: ${indexPath}`);
+        res.status(404).send(`Build folder is empty or not found. Make sure 'npm run build' was executed. Path: ${indexPath}`);
     }
 });
 
 app.listen(port, '0.0.0.0', async () => {
-    console.log(`>> CRM Server started on port ${port}`);
+    console.log(`>> Server listening on ${port}`);
     await initDbPool();
 });
