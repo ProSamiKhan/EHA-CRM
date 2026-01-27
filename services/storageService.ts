@@ -1,10 +1,9 @@
 
 import { Candidate, Batch, User, UserRole, AuditLog } from '../types';
 
-// Use relative path to support subfolder deployments
-const API_URL = 'admission-api';
+// Using a leading slash ensures requests always go to domain.com/admission-api
+const API_URL = '/admission-api';
 
-// Simple check to see if we are in a preview/dev environment
 const isLocalPreview = window.location.hostname === 'localhost' || 
                        window.location.hostname.includes('stackblitz') || 
                        window.location.hostname.includes('webcontainer') ||
@@ -15,16 +14,16 @@ export class StorageService {
 
   static async init() {
     console.log(`Storage service initialized. Mode: ${this.useMock ? 'Mock' : 'API'}`);
-    // Check if API is alive, if not, fallback to mock
     if (!this.useMock) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
-        const res = await fetch(API_URL + '/status', { signal: controller.signal });
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        // Explicitly check the health endpoint at the root
+        const res = await fetch(`${API_URL}/status`, { signal: controller.signal });
         clearTimeout(timeoutId);
         if (!res.ok) throw new Error();
       } catch (e) {
-        console.warn("Backend unreachable. Switching to Demo Mode.");
+        console.warn("Production Backend unreachable at /admission-api/status. Switching to Demo Mode for safety.");
         this.useMock = true;
       }
     }
@@ -41,15 +40,16 @@ export class StorageService {
       });
       
       if (!response.ok) {
+          if (response.status === 404) {
+              throw new Error("API endpoint not found (404). Check if Node.js server.js is running.");
+          }
           const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || `Server Error (${response.status})`);
+          throw new Error(errorData.error || `Server responded with status ${response.status}`);
       }
       return await response.json();
     } catch (error: any) {
-      console.error(`API [${action}] failed:`, error.message);
-      // If we get a connection error in production, we still might want to fallback to mock for demo purposes
-      this.useMock = true;
-      return this.mockAction(action, body);
+      console.error(`API Request [${action}] failed:`, error.message);
+      throw error;
     }
   }
 

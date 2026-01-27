@@ -4,7 +4,6 @@ import { StorageService } from './storageService';
 
 export class AuthService {
   static async login(username: string, password: string): Promise<User | null> {
-    // If StorageService is in Mock/Demo mode, handle login locally
     if (StorageService.isDemoMode()) {
       if (username === 'admin' && password === 'admin123') {
         const demoUser: User = { id: 'demo-admin', username: 'admin', name: 'Demo Administrator', role: UserRole.SUPER_ADMIN, isActive: true };
@@ -15,7 +14,7 @@ export class AuthService {
     }
 
     try {
-      const response = await fetch('admission-api', {
+      const response = await fetch('/admission-api', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'login', username, password })
@@ -27,23 +26,16 @@ export class AuthService {
           localStorage.setItem('crm_session', JSON.stringify(data.user));
           return data.user;
         }
-      } else if (response.status === 401) {
-        throw new Error("Invalid username or password");
       } else {
-        const text = await response.text();
+        if (response.status === 401) throw new Error("Incorrect username or password");
+        if (response.status === 404) throw new Error("API Endpoint not found. Verify server.js is running.");
+        const text = await response.text().catch(() => "Unknown error");
         throw new Error(`Server Error (${response.status}): ${text.substring(0, 50)}`);
       }
       
       return null;
     } catch (e: any) {
-      console.error("Login attempt failed:", e.message);
-      // Last resort fallback if server suddenly died but was expected
-      if (username === 'admin' && password === 'admin123') {
-          console.warn("Falling back to Demo login due to connection failure");
-          const fallbackUser: User = { id: 'demo-admin', username: 'admin', name: 'Demo Admin (Fallback)', role: UserRole.SUPER_ADMIN, isActive: true };
-          localStorage.setItem('crm_session', JSON.stringify(fallbackUser));
-          return fallbackUser;
-      }
+      console.error("Login Error:", e.message);
       throw e;
     }
   }

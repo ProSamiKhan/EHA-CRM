@@ -9,8 +9,9 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-console.log('--- SYSTEM STARTUP ---');
-console.log('Environment Port:', process.env.PORT);
+console.log('--- BACKEND INITIALIZING ---');
+console.log('Target Port:', port);
+console.log('Environment:', process.env.NODE_ENV || 'development');
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -22,7 +23,10 @@ let isConfigured = false;
 
 async function initDbPool() {
     const { DB_HOST, DB_USER, DB_PASSWORD, DB_NAME } = process.env;
-    if (!DB_NAME || !DB_USER) return false;
+    if (!DB_NAME || !DB_USER) {
+        console.warn("WARNING: Database variables not set. System in maintenance/setup mode.");
+        return false;
+    }
     try {
         pool = mysql.createPool({
             host: DB_HOST || 'localhost',
@@ -30,32 +34,38 @@ async function initDbPool() {
             password: DB_PASSWORD,
             database: DB_NAME,
             waitForConnections: true,
-            connectionLimit: 5,
+            connectionLimit: 10,
             multipleStatements: true
         });
         const conn = await pool.getConnection();
         const [rows] = await conn.execute('SHOW TABLES LIKE "users"');
         conn.release();
         isConfigured = rows.length > 0;
-        console.log("Database initialized.");
+        console.log("SUCCESS: Database connection pool ready.");
         return true;
     } catch (e) {
-        console.error("Database initialization failed:", e.message);
+        console.error("ERROR: Database connection failed:", e.message);
         return false;
     }
 }
 
-// Health check
+// Health Check API
 app.get(['/admission-api/status', '/status'], (req, res) => {
-    res.json({ status: 'online', configured: isConfigured });
+    res.json({ 
+        status: 'online', 
+        configured: isConfigured, 
+        version: '1.2.5',
+        timestamp: new Date().toISOString()
+    });
 });
 
-// API Handler with flexible routing
-const apiHandler = async (req, res) => {
+// Primary API POST Handler
+app.post(['/admission-api', '/admission-api/'], async (req, res) => {
     const { action } = req.body;
-    if (!action) return res.status(400).json({ error: 'Action required' });
+    if (!action) return res.status(400).json({ error: 'Action parameter missing' });
 
     try {
+        // Special actions for setup
         if (action === 'test_db_connection') {
             const { host, user, pass, name } = req.body;
             const testConn = await mysql.createConnection({ host, user, password: pass, database: name });
@@ -91,7 +101,10 @@ const apiHandler = async (req, res) => {
             return res.json({ status: 'success' });
         }
 
-        if (!isConfigured || !pool) return res.status(503).json({ error: 'System not configured' });
+        // Standard CRM Actions (Require DB)
+        if (!isConfigured || !pool) {
+            return res.status(503).json({ error: 'Database not initialized. Please visit /installer.html' });
+        }
 
         switch (action) {
             case 'login':
@@ -101,7 +114,7 @@ const apiHandler = async (req, res) => {
                     const { password, ...safeUser } = user;
                     res.json({ status: 'success', user: safeUser });
                 } else {
-                    res.status(401).json({ error: 'Invalid credentials' });
+                    res.status(401).json({ error: 'Invalid username or password' });
                 }
                 break;
             case 'get_candidates':
@@ -167,34 +180,38 @@ const apiHandler = async (req, res) => {
                 res.json({ status: 'success' });
                 break;
             default:
-                res.status(400).json({ error: `Action '${action}' not supported` });
+                res.status(400).json({ error: `Action '${action}' is not implemented.` });
         }
     } catch (err) {
-        res.status(500).json({ error: 'Server error', message: err.message });
+        console.error("Critical API Error:", err.message);
+        res.status(500).json({ error: 'Internal Server Error', message: err.message });
     }
-};
+});
 
-// Map both /admission-api and admission-api
-app.post(['/admission-api', '/admission-api/'], apiHandler);
-
-// Static Serving
+// Serving Static Files (Vite Build)
 const distPath = path.join(__dirname, 'dist');
+
 app.get('/installer.html', (req, res) => res.sendFile(path.join(__dirname, 'installer.html')));
 app.get('/installer.tsx', (req, res) => res.sendFile(path.join(__dirname, 'installer.tsx')));
 
 if (fs.existsSync(distPath)) {
     app.use(express.static(distPath));
+    // Wildcard handler for SPA
     app.get('*', (req, res) => {
-        if (req.path.includes('admission-api')) return;
+        // Skip if this looks like an API call that somehow fell through
+        if (req.path.includes('/admission-api')) {
+            return res.status(404).json({ error: 'API route not found' });
+        }
         res.sendFile(path.join(distPath, 'index.html'));
     });
 } else {
     app.get('/', (req, res) => {
-        res.status(200).send('Backend Active. Build dist/ folder to see UI.');
+        res.status(200).send('Backend is running, but the frontend build (dist/) is missing.');
     });
 }
 
+// Start Server
 app.listen(port, '0.0.0.0', async () => {
-    console.log(`Server started on port ${port}`);
+    console.log(`SERVER STARTED: Listening on 0.0.0.0:${port}`);
     await initDbPool();
 });
