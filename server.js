@@ -13,71 +13,87 @@ const buildPath = path.resolve(__dirname, 'build');
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Diagnostic endpoint to check if build exists
+// 1. API STATUS & BUILD TRIGGER
 app.get('/api-status', (req, res) => {
-    const buildExists = fs.existsSync(buildPath);
     res.json({ 
         status: 'active', 
-        build_folder_exists: buildExists,
-        node_version: process.version,
-        dir: __dirname
+        build_folder_exists: fs.existsSync(buildPath),
+        time: new Date().toISOString()
     });
 });
 
-// Manual build trigger via browser
 app.get('/trigger-build', (req, res) => {
     console.log("Starting build process...");
-    exec("npx vite build", { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+    // Increased buffer for large Vite builds
+    exec("npx vite build", { maxBuffer: 1024 * 1024 * 20 }, (error, stdout, stderr) => {
         if (error) {
             console.error(`Build Error: ${error.message}`);
-            return res.status(500).json({ status: 'error', error: error.message, stderr });
+            return res.status(500).json({ status: 'error', error: error.message });
         }
-        res.json({ status: 'success', stdout });
+        res.json({ status: 'success', message: 'Build completed successfully' });
     });
 });
 
-// Mock API Route (until DB is connected)
+// 2. MOCK API (To keep frontend working without DB config initially)
 app.post('/api-v1', (req, res) => {
     const { action } = req.body;
-    console.log(`API Action: ${action}`);
-    // In a real scenario, this would interact with MySQL
-    res.json({ status: 'API Online', message: 'Database connection pending configuration' });
+    res.json({ status: 'mock_active', action_received: action });
 });
 
-// Serve Static Files from Build
-app.use(express.static(buildPath));
+// 3. STATIC FILES
+if (fs.existsSync(buildPath)) {
+    app.use(express.static(buildPath));
+}
 
-// SPA Catch-all
+// 4. SPA ROUTING
 app.get('*', (req, res) => {
     const indexPath = path.join(buildPath, 'index.html');
     if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
     } else {
+        // Render a setup page if build is missing
         res.status(200).send(`
             <!DOCTYPE html>
-            <html>
-            <head><title>System Setup</title>
-            <style>body{font-family:sans-serif;text-align:center;padding:50px;background:#f8fafc;}</style>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8"><title>CRM Initializing</title>
+                <script src="https://cdn.tailwindcss.com"></script>
             </head>
-            <body>
-                <h1>English House Academy CRM</h1>
-                <p>The system needs to be compiled. Please click the button below.</p>
-                <button onclick="startBuild()" id="btn" style="padding:15px 30px;background:#4f46e5;color:white;border:none;border-radius:10px;cursor:pointer;font-weight:bold;">Start System Build</button>
-                <div id="status" style="margin-top:20px;font-family:monospace;font-size:12px;color:#64748b;"></div>
+            <body class="bg-slate-50 min-h-screen flex items-center justify-center p-6 text-center">
+                <div class="max-w-md w-full bg-white p-10 rounded-[2.5rem] shadow-xl border border-slate-100">
+                    <div class="w-20 h-20 bg-indigo-600 rounded-3xl flex items-center justify-center text-white mx-auto mb-6 shadow-lg shadow-indigo-100">
+                        <i class="fa-solid fa-rocket text-3xl"></i>
+                    </div>
+                    <h1 class="text-2xl font-black text-slate-900 mb-2">Welcome to EHA CRM</h1>
+                    <p class="text-slate-500 text-sm mb-8 leading-relaxed">The system needs a one-time compilation to optimize performance for your server.</p>
+                    <button id="buildBtn" onclick="runBuild()" class="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold hover:scale-[1.02] transition-all">Compile System Now</button>
+                    <p id="log" class="mt-4 text-[10px] font-mono text-slate-400"></p>
+                </div>
+                <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
                 <script>
-                    function startBuild() {
-                        const btn = document.getElementById('btn');
+                    function runBuild() {
+                        const btn = document.getElementById('buildBtn');
+                        const log = document.getElementById('log');
                         btn.disabled = true;
-                        btn.innerText = 'Building... (Please wait)';
+                        btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin mr-2"></i> Compiling...';
+                        log.innerText = 'Initializing Vite...';
+                        
                         fetch('/trigger-build')
                             .then(r => r.json())
                             .then(data => {
-                                if(data.status === 'success') window.location.reload();
-                                else document.getElementById('status').innerText = data.error;
+                                if(data.status === 'success') {
+                                    log.innerText = 'Success! Reloading...';
+                                    setTimeout(() => window.location.reload(), 1500);
+                                } else {
+                                    log.innerText = 'Error: ' + data.error;
+                                    btn.disabled = false;
+                                    btn.innerText = 'Retry Compilation';
+                                }
                             })
                             .catch(err => {
-                                document.getElementById('status').innerText = 'Error: ' + err.message;
+                                log.innerText = 'Network Error. Check console.';
                                 btn.disabled = false;
+                                btn.innerText = 'Retry';
                             });
                     }
                 </script>
@@ -87,6 +103,6 @@ app.get('*', (req, res) => {
     }
 });
 
-app.listen(port, '0.0.0.0', () => {
-    console.log(`>> CRM Server listening on port ${port}`);
+app.listen(port, () => {
+    console.log(`>> Server listening on port ${port}`);
 });
