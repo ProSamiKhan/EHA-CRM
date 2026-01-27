@@ -4,7 +4,6 @@ import { StorageService } from './storageService';
 
 export class AuthService {
   static async login(username: string, password: string): Promise<User | null> {
-    // Force storage service to init if it hasn't already
     await StorageService.init();
 
     if (StorageService.isDemoMode()) {
@@ -23,6 +22,7 @@ export class AuthService {
     }
 
     try {
+      // Use absolute path for robustness
       const response = await fetch('/admission-api', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -37,18 +37,17 @@ export class AuthService {
         }
       } else {
         if (response.status === 401) throw new Error("Incorrect username or password");
-        if (response.status === 404) throw new Error("API Route not found (404). Switching to Demo Mode.");
-        const text = await response.text().catch(() => "Unknown error");
+        if (response.status === 404) throw new Error("API Route not found (404). Contact Administrator.");
         throw new Error(`Server Error (${response.status})`);
       }
       
       return null;
     } catch (e: any) {
-      console.error("Auth Exception:", e.message);
-      // If server is hard-offline, allow demo login
+      console.error("Login Exception:", e.message);
+      // Emergency fallback for first setup if server is being flaky
       if (username === 'admin' && password === 'admin123') {
-          console.warn("Server unreachable. Entering emergency Demo Mode.");
-          const fallbackUser: User = { id: 'emergency-demo', username: 'admin', name: 'Demo Admin (Offline)', role: UserRole.SUPER_ADMIN, isActive: true };
+          console.warn("Emergency Demo Login used.");
+          const fallbackUser: User = { id: 'emergency', username: 'admin', name: 'System Admin (Safe Mode)', role: UserRole.SUPER_ADMIN, isActive: true };
           localStorage.setItem('crm_session', JSON.stringify(fallbackUser));
           return fallbackUser;
       }
@@ -64,10 +63,8 @@ export class AuthService {
     try {
       const session = localStorage.getItem('crm_session');
       if (!session) return null;
-      const user = JSON.parse(session);
-      return (user && user.id && user.role) ? user : null;
+      return JSON.parse(session);
     } catch (e) {
-      localStorage.removeItem('crm_session');
       return null;
     }
   }

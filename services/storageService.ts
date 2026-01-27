@@ -17,13 +17,15 @@ export class StorageService {
                     window.location.hostname.includes('gemini') ||
                     window.location.hostname.includes('preview');
 
-    console.log(`[STORAGE] Initialization starting...`);
-    console.log(`[STORAGE] Environment: ${isLocal ? 'DEVELOPMENT' : 'PRODUCTION'}`);
-    console.log(`[STORAGE] Target API Path: ${API_URL}`);
+    console.log(`[SYSTEM] Initializing Storage Service...`);
+    console.log(`[SYSTEM] Host: ${window.location.hostname} | Local Detection: ${isLocal}`);
 
     try {
+      // First attempt: Check status
+      console.log(`[SYSTEM] Probing backend: ${window.location.origin}${API_URL}/status`);
+      
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
       
       const res = await fetch(`${API_URL}/status`, { 
         method: 'GET',
@@ -34,22 +36,21 @@ export class StorageService {
 
       if (res.ok) {
         const data = await res.json();
-        console.log("[STORAGE] Backend connection verified:", data);
+        console.log("[SYSTEM] Backend connected successfully:", data);
         this.useMock = false;
       } else {
-        console.warn(`[STORAGE] Backend returned non-OK status: ${res.status}`);
-        throw new Error(`Status ${res.status}`);
+        console.warn(`[SYSTEM] Backend returned status ${res.status}. Response:`, await res.text().catch(() => 'No text'));
+        throw new Error(`HTTP ${res.status}`);
       }
     } catch (e: any) {
-      console.warn(`[STORAGE] Connectivity probe failed: ${e.message}`);
+      console.warn(`[SYSTEM] Connectivity probe failed: ${e.message}`);
       
-      // Fallback behavior
       if (isLocal) {
-          console.info("[STORAGE] Local dev detected. Enabling Mock Storage.");
+          console.info("[SYSTEM] Development environment: Enabling Mock Storage.");
           this.useMock = true;
       } else {
-          console.error("[STORAGE] CRITICAL: Production backend unreachable at /admission-api/status.");
-          // We enable mock so the user doesn't see a white screen, but real data won't work.
+          console.error("[SYSTEM] CRITICAL: Production backend unreachable. Check Node.js server status.");
+          // Enable mock as a "safety mode" so the app doesn't go blank, but data won't persist to DB
           this.useMock = true;
       }
     }
@@ -69,14 +70,13 @@ export class StorageService {
       });
       
       if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || `API responded with error ${response.status}`);
+          const errorText = await response.text();
+          console.error(`[API] Server returned ${response.status}:`, errorText);
+          throw new Error(`API Error: ${response.status}`);
       }
       return await response.json();
     } catch (error: any) {
-      console.error(`[STORAGE] API Call '${action}' Failed:`, error.message);
-      // If we are in production and it fails, don't automatically switch to mock mid-session
-      // to avoid data loss/confusion, just propagate the error.
+      console.error(`[API] Fetch Error [${action}]:`, error.message);
       throw error;
     }
   }
