@@ -25,18 +25,16 @@ const pool = mysql.createPool({
   queueLimit: 0
 });
 
-// API STATUS
+// API STATUS / Diagnostic Route
 app.get('/api-status', async (req, res) => {
     try {
         await pool.query('SELECT 1');
-        const [tables] = await pool.query("SHOW TABLES LIKE 'users'");
         const buildExists = fs.existsSync(buildPath);
         const indexExists = fs.existsSync(path.join(buildPath, 'index.html'));
         
         res.json({ 
             status: 'active', 
             database: 'connected',
-            schema: tables.length > 0 ? 'ready' : 'missing_tables',
             environment: {
                 buildDir: buildPath,
                 buildFound: buildExists,
@@ -141,29 +139,28 @@ app.post('/api-v1', async (req, res) => {
     }
 });
 
-// SERVE STATIC FILES
+// SERVE STATIC FILES FROM BUILD FOLDER
 if (fs.existsSync(buildPath)) {
-    // 1. Serve static files with normal behavior
+    // Priority 1: Serve actual files from the build directory
     app.use(express.static(buildPath, { maxAge: '1d' }));
-
-    // 2. Prevent SPA 404 loop: If a file request (ending in extension) is not found, return 404
-    // This stops the browser from trying to parse index.html as a JS file.
-    app.get(/\.(js|css|png|jpg|jpeg|gif|svg|ico|json|woff|woff2|ttf|otf)$/, (req, res) => {
-        res.status(404).end();
-    });
-
-    // 3. SPA Routing: For navigation requests, send index.html
+    
+    // Priority 2: Serve index.html for any remaining non-API routes (SPA Routing)
     app.get('*', (req, res) => {
         const indexFile = path.join(buildPath, 'index.html');
         if (fs.existsSync(indexFile)) {
             res.sendFile(indexFile);
         } else {
-            res.status(404).send("Build folder found, but index.html is missing.");
+            res.status(404).send("Application built, but index.html is missing from the build folder.");
         }
     });
 } else {
+    // Fallback: If build folder is missing, provide clear feedback
     app.get('*', (req, res) => {
-        res.status(404).send(`Build folder not found at: ${buildPath}`);
+        res.status(404).send(`
+            <h1>Environment Error</h1>
+            <p>The <b>build</b> folder was not found at <code>${buildPath}</code>.</p>
+            <p>Please run <code>npm run build</code> and ensure the output is uploaded correctly.</p>
+        `);
     });
 }
 
