@@ -2,11 +2,14 @@
 RewriteEngine On
 RewriteBase /
 
-# 1. Direct access to installer and other static files
+# 1. Allow access to physical files (CSS, JS, Images, Installer)
 RewriteCond %{REQUEST_FILENAME} -f [OR]
 RewriteCond %{REQUEST_FILENAME} -d
 RewriteRule ^ - [L]
 
-# 2. Map all non-file requests to index.html (SPA)
-# Hostinger's Node.js proxy will catch the /api-v1 routes if configured.
+# 2. Specifically ensure API routes are NOT handled as files/folders
+# This helps Hostinger's Node.js proxy catch these specific paths
+RewriteRule ^(api-v1|api-status) - [L]
+
+# 3. SPA Routing: Map all other requests to index.html
 RewriteRule ^ index.html [L]

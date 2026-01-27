@@ -19,7 +19,6 @@ const Installer: React.FC = () => {
     adminPass: ''
   });
 
-  // Use the new API path
   const API_URL = '/api-v1';
 
   useEffect(() => {
@@ -29,26 +28,22 @@ const Installer: React.FC = () => {
   const checkServer = async () => {
     setServerStatus('checking');
     try {
-      // First try the specialized status endpoint
-      const res = await fetch('/api-status');
+      console.log("Checking /api-status...");
+      const res = await fetch('/api-status', { cache: 'no-store' });
+      const text = await res.text();
+      console.log("Status response text:", text);
+
       if (res.ok) {
-        setServerStatus('online');
-        setServerError('');
-        return;
-      }
-      
-      // Fallback to main API endpoint
-      const res2 = await fetch(API_URL);
-      if (res2.ok) {
         setServerStatus('online');
         setServerError('');
       } else {
         setServerStatus('offline');
-        setServerError(`HTTP ${res2.status}: ${res2.statusText}`);
+        setServerError(`HTTP ${res.status}: ${res.statusText}`);
       }
     } catch (e: any) {
+      console.error("Server check failed:", e);
       setServerStatus('offline');
-      setServerError(e.message || 'Network error: Server unreachable.');
+      setServerError(e.message || 'Connection failed.');
     }
   };
 
@@ -138,16 +133,13 @@ const Installer: React.FC = () => {
             <div className="mb-6 p-4 bg-rose-50 border border-rose-100 text-rose-600 rounded-2xl text-xs flex flex-col gap-2">
               <div className="flex items-center gap-2 font-bold">
                 <i className="fa-solid fa-triangle-exclamation"></i>
-                <span>BACKEND NOT RESPONDING</span>
+                <span>BACKEND CONNECTION ISSUE</span>
               </div>
               <p className="opacity-80 font-mono">Status: {serverError}</p>
-              <p className="mt-2 font-bold text-[10px] uppercase border-t border-rose-200 pt-2">Checklist for Hostinger:</p>
-              <ul className="list-disc list-inside opacity-70 space-y-1">
-                <li>Go to <strong>Node.js</strong> section in hPanel.</li>
-                <li>Make sure Application Status is <strong>"Started"</strong>.</li>
-                <li>Verify <strong>Application URL</strong> matches your domain exactly.</li>
-                <li>Check <strong>"Application Entry Point"</strong> is set to <code>server.js</code>.</li>
-              </ul>
+              <div className="mt-2 p-3 bg-white/50 rounded-xl border border-rose-100">
+                <p className="font-bold text-[10px] uppercase text-rose-700 mb-1">Most Common Fix:</p>
+                <p className="opacity-80">In your <strong>Hostinger hPanel</strong>, go to Node.js section and make sure the <strong>Application URL</strong> exactly matches <code>englishhouseacademy.co.in</code>.</p>
+              </div>
             </div>
           )}
 

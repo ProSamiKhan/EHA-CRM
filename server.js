@@ -7,24 +7,23 @@ const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
-// Hostinger uses process.env.PORT automatically
+// Hostinger provides the port via process.env.PORT
 const port = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Logging middleware to help debug in Hostinger logs
-app.use((req, res, next) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-    next();
-});
-
-// 1. Root Test Route - check if node is reachable at all
+// 1. ABSOLUTE PRIORITY ROUTES (No middleware interference)
 app.get('/api-status', (req, res) => {
-    res.status(200).json({ status: 'active', message: 'Node.js is responding' });
+    res.setHeader('Content-Type', 'application/json');
+    res.status(200).send(JSON.stringify({ 
+        status: 'active', 
+        message: 'Node.js is responding',
+        timestamp: Date.now()
+    }));
 });
 
-// 2. Database Connection
+// 2. Database State
 let pool = null;
 let isConfigured = false;
 
@@ -44,28 +43,22 @@ async function initDbPool() {
         const [rows] = await conn.execute('SHOW TABLES LIKE "users"');
         conn.release();
         isConfigured = rows.length > 0;
-        console.log(">> Database Connected Successfully");
+        console.log(">> DB Connected");
         return true;
     } catch (e) {
-        console.error(">> Database Connection Error:", e.message);
+        console.error(">> DB Error:", e.message);
         return false;
     }
 }
 
-// 3. Main API Handler
+// 3. API Handler Function
 const apiHandler = async (req, res) => {
-    // Return status on GET
     if (req.method === 'GET') {
-        return res.json({ 
-            status: 'online', 
-            configured: isConfigured, 
-            version: '1.2.5',
-            node_env: process.env.NODE_ENV || 'production'
-        });
+        return res.json({ status: 'online', configured: isConfigured });
     }
 
     const { action } = req.body;
-    if (!action) return res.status(400).json({ error: 'No action specified' });
+    if (!action) return res.status(400).json({ error: 'Action missing' });
 
     try {
         if (action === 'test_db_connection') {
@@ -93,7 +86,7 @@ const apiHandler = async (req, res) => {
             return res.json({ status: 'success' });
         }
 
-        if (!isConfigured || !pool) return res.status(503).json({ error: 'DB not configured' });
+        if (!isConfigured || !pool) return res.status(503).json({ error: 'DB not ready' });
 
         switch (action) {
             case 'login':
@@ -102,7 +95,7 @@ const apiHandler = async (req, res) => {
                     const u = { ...users[0] }; delete u.password;
                     return res.json({ status: 'success', user: u });
                 }
-                return res.status(401).json({ error: 'Unauthorized' });
+                return res.status(401).json({ error: 'Invalid' });
             
             case 'get_candidates':
                 const [candidates] = await pool.execute('SELECT * FROM candidates ORDER BY createdAt DESC');
@@ -134,29 +127,35 @@ const apiHandler = async (req, res) => {
                 return res.json(ul);
 
             default: 
-                return res.status(404).json({ error: 'Action not found' });
+                return res.status(404).json({ error: 'Action unknown' });
         }
     } catch (e) {
         return res.status(500).json({ error: e.message });
     }
 };
 
-// Use api-v1 (cleaner URL)
 app.all('/api-v1', apiHandler);
 app.all('/api-v1/*', apiHandler);
 
-// 4. Static Files
+// 4. Static Files & SPA Logic
 const buildPath = path.join(__dirname, 'build');
-if (fs.existsSync(buildPath)) {
-    app.use(express.static(buildPath));
-    // Serve index.html for all other routes to support SPA
-    app.get('*', (req, res) => {
-        if (req.url.startsWith('/api-v1') || req.url === '/api-status') return;
-        res.sendFile(path.join(buildPath, 'index.html'));
-    });
-}
+app.use(express.static(buildPath));
+
+app.get('*', (req, res) => {
+    // DO NOT allow index.html to serve for API paths
+    if (req.url.startsWith('/api-v1') || req.url === '/api-status') {
+        return res.status(404).json({ error: 'API route not matched' });
+    }
+    
+    const indexPath = path.join(buildPath, 'index.html');
+    if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else {
+        res.status(404).send('Application build not found. Please run build script.');
+    }
+});
 
 app.listen(port, '0.0.0.0', async () => {
-    console.log(`>> Server listening on port ${port}`);
+    console.log(`>> Node Server running on port ${port}`);
     await initDbPool();
 });
