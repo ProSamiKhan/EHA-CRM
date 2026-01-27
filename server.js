@@ -7,31 +7,35 @@ const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
+// Hostinger usually provides a PORT env var. 
+// If not, we fall back to 3000.
 const port = process.env.PORT || 3000;
 
-console.log('--- SYSTEM INITIALIZING ---');
-console.log('Detected Port:', port);
+console.log('--- SYSTEM BOOT ---');
+console.log('Date:', new Date().toISOString());
+console.log('Directory:', __dirname);
 console.log('Node Version:', process.version);
+console.log('Listening Port:', port);
 
-// Standard Middlewares
+// Basic Middlewares
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Debug logging middleware
+// Global Request Logger
 app.use((req, res, next) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    console.log(`[REQ] ${req.method} ${req.url}`);
     next();
 });
 
-// Global State
+// 1. DATABASE SETUP
 let pool = null;
 let isConfigured = false;
 
 async function initDbPool() {
     const { DB_HOST, DB_USER, DB_PASSWORD, DB_NAME } = process.env;
     if (!DB_NAME || !DB_USER) {
-        console.warn("WARNING: DB_NAME or DB_USER missing in .env. Setup required.");
+        console.warn("!! Database credentials missing in .env !!");
         return false;
     }
     try {
@@ -41,36 +45,28 @@ async function initDbPool() {
             password: DB_PASSWORD,
             database: DB_NAME,
             waitForConnections: true,
-            connectionLimit: 10,
+            connectionLimit: 5,
             multipleStatements: true
         });
         const conn = await pool.getConnection();
         const [rows] = await conn.execute('SHOW TABLES LIKE "users"');
         conn.release();
         isConfigured = rows.length > 0;
-        console.log("SUCCESS: Database connected.");
+        console.log(">> Database connected and verified.");
         return true;
     } catch (e) {
-        console.error("FAILURE: Database connection error:", e.message);
+        console.error("!! Database connection FAILED:", e.message);
         return false;
     }
 }
 
-// 1. HIGH-PRIORITY API ROUTES (Must be before static middleware)
-app.get(['/admission-api/status', '/status'], (req, res) => {
-    res.json({ 
-        status: 'online', 
-        configured: isConfigured,
-        timestamp: new Date().toISOString()
-    });
-});
-
-app.post(['/admission-api', '/admission-api/'], async (req, res) => {
+// 2. PRIMARY API ROUTING (Defined before static files)
+const apiHandler = async (req, res) => {
     const { action } = req.body;
     if (!action) return res.status(400).json({ error: 'Action parameter required' });
 
     try {
-        // Setup Logic
+        // Special actions for setup
         if (action === 'test_db_connection') {
             const { host, user, pass, name } = req.body;
             const testConn = await mysql.createConnection({ host, user, password: pass, database: name });
@@ -106,9 +102,9 @@ app.post(['/admission-api', '/admission-api/'], async (req, res) => {
             return res.json({ status: 'success' });
         }
 
-        // Operational Logic
+        // Operational actions
         if (!isConfigured || !pool) {
-            return res.status(503).json({ error: 'Database not initialized. Please run installer.' });
+            return res.status(503).json({ error: 'Database not initialized. Please visit /installer.html' });
         }
 
         switch (action) {
@@ -119,7 +115,7 @@ app.post(['/admission-api', '/admission-api/'], async (req, res) => {
                     const { password, ...safeUser } = user;
                     res.json({ status: 'success', user: safeUser });
                 } else {
-                    res.status(401).json({ error: 'Unauthorized' });
+                    res.status(401).json({ error: 'Invalid credentials' });
                 }
                 break;
             case 'get_candidates':
@@ -185,34 +181,48 @@ app.post(['/admission-api', '/admission-api/'], async (req, res) => {
                 res.json({ status: 'success' });
                 break;
             default:
-                res.status(400).json({ error: `Action '${action}' not supported` });
+                res.status(400).json({ error: `Unknown action: ${action}` });
         }
     } catch (err) {
-        console.error("API Route Error:", err.message);
-        res.status(500).json({ error: 'Internal Error', message: err.message });
+        console.error("!! API Execution Error:", err.message);
+        res.status(500).json({ error: 'Server process error', message: err.message });
     }
+};
+
+// Route mapping
+app.post(['/admission-api', '/admission-api/'], apiHandler);
+app.get(['/admission-api/status', '/status'], (req, res) => {
+    res.json({ 
+        online: true, 
+        db_ready: isConfigured, 
+        api_path: '/admission-api',
+        time: new Date().toISOString() 
+    });
 });
 
-// 2. STATIC FILE SERVING
-const distPath = path.join(__dirname, 'dist');
-if (fs.existsSync(distPath)) {
-    app.use(express.static(distPath));
+// 3. STATIC FILE SERVING (Using 'build' folder)
+const buildPath = path.resolve(__dirname, 'build');
+
+if (fs.existsSync(buildPath)) {
+    console.log('>> Found build folder at:', buildPath);
+    app.use(express.static(buildPath));
+    
+    // SPA Wildcard - should be at the end
     app.get('*', (req, res) => {
-        // Safety: Don't let SPA wildcard catch API calls that missed
+        // Ensure API calls don't return the SPA HTML if they hit a missing route
         if (req.url.startsWith('/admission-api')) {
-            return res.status(404).json({ error: 'API not found' });
+            return res.status(404).json({ error: 'API route not found' });
         }
-        res.sendFile(path.join(distPath, 'index.html'));
+        res.sendFile(path.join(buildPath, 'index.html'));
     });
 } else {
-    // If no dist folder, serve a placeholder or the installer
+    console.warn('!! Build folder NOT found. Serving installer/placeholder only !!');
     app.get('/installer.html', (req, res) => res.sendFile(path.join(__dirname, 'installer.html')));
-    app.get('/installer.tsx', (req, res) => res.sendFile(path.join(__dirname, 'installer.tsx')));
-    app.get('/', (req, res) => res.send('Frontend build not found. Run "npm run build" first.'));
+    app.get('/', (req, res) => res.status(200).send('Backend Online. UI not built (build/ missing).'));
 }
 
-// Start
+// Start Listen
 app.listen(port, '0.0.0.0', async () => {
-    console.log(`SERVER RUNNING at 0.0.0.0:${port}`);
+    console.log(`>> SERVER ACTIVE ON PORT: ${port}`);
     await initDbPool();
 });
