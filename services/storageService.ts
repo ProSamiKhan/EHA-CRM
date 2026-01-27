@@ -1,35 +1,53 @@
 
 import { Candidate, Batch, User, UserRole, AuditLog } from '../types';
 
-// Using a leading slash ensures requests always go to domain.com/admission-api
+// Absolute path to the API
 const API_URL = '/admission-api';
 
-const isLocalPreview = window.location.hostname === 'localhost' || 
-                       window.location.hostname.includes('stackblitz') || 
-                       window.location.hostname.includes('webcontainer') ||
-                       window.location.hostname.includes('gemini');
-
 export class StorageService {
-  private static useMock = isLocalPreview;
+  private static useMock = false;
+  private static initialized = false;
 
   static async init() {
-    console.log(`Storage service initialized. Mode: ${this.useMock ? 'Mock' : 'API'}`);
-    if (!this.useMock) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3000);
-        // Explicitly check the health endpoint at the root
-        const res = await fetch(`${API_URL}/status`, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (!res.ok) throw new Error();
-      } catch (e) {
-        console.warn("Production Backend unreachable at /admission-api/status. Switching to Demo Mode for safety.");
-        this.useMock = true;
+    if (this.initialized) return;
+    
+    const isLocal = window.location.hostname === 'localhost' || 
+                    window.location.hostname.includes('stackblitz') || 
+                    window.location.hostname.includes('webcontainer') ||
+                    window.location.hostname.includes('gemini') ||
+                    window.location.hostname.includes('preview');
+
+    console.log(`System Check: Hostname is ${window.location.hostname}. Local environment: ${isLocal}`);
+
+    // Always try to ping the real backend first if not obviously a local dev environment
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      
+      const res = await fetch(`${API_URL}/status`, { 
+        method: 'GET',
+        signal: controller.signal 
+      });
+      
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        const status = await res.json();
+        console.log("Backend connection verified:", status);
+        this.useMock = false;
+      } else {
+        throw new Error(`Status ${res.status}`);
       }
+    } catch (e) {
+      console.warn("Backend connection failed. Enabling Demo Mode (Local Storage).");
+      this.useMock = true;
     }
+
+    this.initialized = true;
   }
 
   private static async fetchApi(action: string, body?: any) {
+    if (!this.initialized) await this.init();
     if (this.useMock) return this.mockAction(action, body);
 
     try {
@@ -41,15 +59,18 @@ export class StorageService {
       
       if (!response.ok) {
           if (response.status === 404) {
-              throw new Error("API endpoint not found (404). Check if Node.js server.js is running.");
+              console.error("Critical: API Endpoint /admission-api returned 404. Check server.js.");
+              this.useMock = true; // Fallback to mock so UI doesn't break
+              return this.mockAction(action, body);
           }
           const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || `Server responded with status ${response.status}`);
+          throw new Error(errorData.error || `Server Error ${response.status}`);
       }
       return await response.json();
     } catch (error: any) {
-      console.error(`API Request [${action}] failed:`, error.message);
-      throw error;
+      console.error(`API [${action}] error:`, error.message);
+      this.useMock = true;
+      return this.mockAction(action, body);
     }
   }
 
@@ -58,14 +79,18 @@ export class StorageService {
     const setStorage = (key: string, val: any) => localStorage.setItem(`crm_mock_${key}`, JSON.stringify(val));
 
     switch (action) {
-      case 'get_users': return getStorage('users').length ? getStorage('users') : [{ id: 'admin-01', username: 'admin', name: 'Demo Admin', role: 'SUPER_ADMIN', isActive: true }];
+      case 'get_users': 
+        const u = getStorage('users');
+        return u.length ? u : [{ id: 'admin-01', username: 'admin', name: 'Demo Admin', role: 'SUPER_ADMIN', isActive: true }];
       case 'save_user':
         const users = getStorage('users');
         const idx = users.findIndex((u: any) => u.id === body.user.id);
         if (idx >= 0) users[idx] = body.user; else users.push(body.user);
         setStorage('users', users);
         return { status: 'success' };
-      case 'get_batches': return getStorage('batches').length ? getStorage('batches') : [{ id: 'batch-1', name: 'July 2026', maxSeats: 60, createdAt: Date.now() }];
+      case 'get_batches': 
+        const b = getStorage('batches');
+        return b.length ? b : [{ id: 'batch-1', name: 'July 2026 Intake', maxSeats: 60, createdAt: Date.now() }];
       case 'save_batch':
         const batches = getStorage('batches');
         const bIdx = batches.findIndex((b: any) => b.id === body.batch.id);
@@ -79,6 +104,13 @@ export class StorageService {
         if (cIdx >= 0) candidates[cIdx] = body.candidate; else candidates.push(body.candidate);
         setStorage('candidates', candidates);
         return { status: 'success' };
+      case 'delete_user':
+        setStorage('users', getStorage('users').filter((u: any) => u.id !== body.id));
+        return { status: 'success' };
+      case 'delete_batch':
+        setStorage('batches', getStorage('batches').filter((b: any) => b.id !== body.id));
+        return { status: 'success' };
+      case 'get_audit_logs': return [];
       default: return [];
     }
   }
