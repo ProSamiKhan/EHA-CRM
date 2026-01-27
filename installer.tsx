@@ -17,11 +17,14 @@ const Installer: React.FC = () => {
     adminPass: ''
   });
 
+  // Helper to get consistent API URL
+  const API_URL = '/admission-api/';
+
   const testConnection = async () => {
     setDbStatus('testing');
     setError('');
     try {
-      const res = await fetch('/admission-api', {
+      const res = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -32,16 +35,21 @@ const Installer: React.FC = () => {
             name: config.dbName 
         })
       });
+      
+      if (!res.ok) {
+        throw new Error(`Server error: ${res.status} ${res.statusText}`);
+      }
+
       const data = await res.json();
       if (data.status === 'success') {
         setDbStatus('success');
       } else {
         setDbStatus('failed');
-        setError(data.message || 'Connection failed');
+        setError(data.error || data.message || 'Connection failed');
       }
-    } catch (e) {
+    } catch (e: any) {
       setDbStatus('failed');
-      setError('Could not reach the setup API.');
+      setError(`Setup API Error: ${e.message}`);
     }
   };
 
@@ -49,19 +57,24 @@ const Installer: React.FC = () => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/admission-api', {
+      const res = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'perform_install', ...config })
       });
+      
+      if (!res.ok) {
+        throw new Error(`Installation failed: ${res.status}`);
+      }
+
       const data = await res.json();
       if (data.status === 'success') {
         setStep(4);
       } else {
-        setError(data.message || 'Installation failed');
+        setError(data.error || data.message || 'Installation failed');
       }
-    } catch (e) {
-      setError('Installation request failed.');
+    } catch (e: any) {
+      setError(`Installation request failed: ${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -102,11 +115,11 @@ const Installer: React.FC = () => {
               <div className="text-center py-4">
                 <i className="fa-solid fa-database text-5xl text-slate-200 mb-4"></i>
                 <h3 className="text-lg font-bold text-slate-800">Database Configuration</h3>
-                <p className="text-slate-500 text-sm">Enter your MySQL credentials to connect the CRM.</p>
+                <p className="text-slate-500 text-sm">Enter your MySQL credentials from Hostinger.</p>
               </div>
               
               <div className="grid grid-cols-1 gap-4">
-                <Input label="DB Host" value={config.dbHost} onChange={v => setConfig({...config, dbHost: v})} />
+                <Input label="DB Host (e.g. localhost)" value={config.dbHost} onChange={v => setConfig({...config, dbHost: v})} />
                 <div className="grid grid-cols-2 gap-4">
                   <Input label="DB Username" value={config.dbUser} onChange={v => setConfig({...config, dbUser: v})} />
                   <Input label="DB Password" type="password" value={config.dbPass} onChange={v => setConfig({...config, dbPass: v})} />
@@ -141,7 +154,7 @@ const Installer: React.FC = () => {
               <div className="text-center py-4">
                 <i className="fa-solid fa-user-shield text-5xl text-slate-200 mb-4"></i>
                 <h3 className="text-lg font-bold text-slate-800">Admin Account</h3>
-                <p className="text-slate-500 text-sm">Provision the initial super administrator account.</p>
+                <p className="text-slate-500 text-sm">Create the login for your first Super Admin.</p>
               </div>
 
               <div className="grid grid-cols-1 gap-4">
@@ -168,7 +181,7 @@ const Installer: React.FC = () => {
                 <i className="fa-solid fa-check-double"></i>
               </div>
               <h2 className="text-2xl font-black text-slate-900 mb-2">Setup Complete!</h2>
-              <p className="text-slate-500 mb-8 px-4">The database has been initialized and the admin account is ready. You can now log in to the system.</p>
+              <p className="text-slate-500 mb-8 px-4">The database has been initialized. You can now log in to the system.</p>
               <a 
                 href="/" 
                 className="inline-block bg-slate-900 text-white px-10 py-4 rounded-2xl font-bold hover:bg-slate-800 transition-all shadow-xl"

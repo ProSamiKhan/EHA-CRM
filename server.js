@@ -58,7 +58,8 @@ api.get('/status', (req, res) => {
     });
 });
 
-api.post('/', async (req, res) => {
+// Use both '/' and empty string to catch all POSTs to /admission-api/
+const handleApiPost = async (req, res) => {
     const { action } = req.body;
     try {
         if (action === 'test_db_connection') {
@@ -144,7 +145,10 @@ api.post('/', async (req, res) => {
         console.error("API POST Error:", e.message);
         res.status(500).json({ error: e.message });
     }
-});
+};
+
+api.post('/', handleApiPost);
+api.post('', handleApiPost);
 
 app.use('/admission-api', api);
 
