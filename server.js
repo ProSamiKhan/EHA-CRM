@@ -21,7 +21,10 @@ let isConfigured = false;
 
 async function initDbPool() {
     const { DB_HOST, DB_USER, DB_PASSWORD, DB_NAME } = process.env;
-    if (!DB_NAME) return false;
+    if (!DB_NAME || !DB_USER) {
+        console.log(">> DB Config missing in Env Variables.");
+        return false;
+    }
     try {
         pool = mysql.createPool({
             host: DB_HOST || 'localhost',
@@ -35,10 +38,10 @@ async function initDbPool() {
         const [rows] = await conn.execute('SHOW TABLES LIKE "users"');
         conn.release();
         isConfigured = rows.length > 0;
-        console.log(">> Database Connected.");
+        console.log(isConfigured ? ">> Database Connected & Tables Found." : ">> Database Connected but Tables Missing.");
         return true;
     } catch (e) {
-        console.error("!! DB Error:", e.message);
+        console.error("!! DB Connection Error:", e.message);
         return false;
     }
 }
@@ -47,7 +50,12 @@ async function initDbPool() {
 const api = express.Router();
 
 api.get('/status', (req, res) => {
-    res.json({ online: true, db: isConfigured, time: new Date().toISOString() });
+    res.json({ 
+        online: true, 
+        db: isConfigured, 
+        env_check: !!process.env.DB_NAME,
+        time: new Date().toISOString() 
+    });
 });
 
 api.post('/', async (req, res) => {
@@ -64,8 +72,11 @@ api.post('/', async (req, res) => {
             const { dbHost, dbUser, dbPass, dbName, adminUser, adminPass } = req.body;
             const testPool = mysql.createPool({ host: dbHost, user: dbUser, password: dbPass, database: dbName, multipleStatements: true });
             const conn = await testPool.getConnection();
-            const schemaSql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-            await conn.query(schemaSql);
+            const schemaPath = path.join(__dirname, 'schema.sql');
+            if (fs.existsSync(schemaPath)) {
+                const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+                await conn.query(schemaSql);
+            }
             await conn.execute('REPLACE INTO users (id, username, password, name, role, isActive) VALUES (?, ?, ?, ?, ?, ?)',
                 ['admin-init', adminUser, adminPass, 'Super Admin', 'SUPER_ADMIN', 1]);
             conn.release();
@@ -80,13 +91,14 @@ api.post('/', async (req, res) => {
             case 'login':
                 const [users] = await pool.execute('SELECT * FROM users WHERE username = ? AND isActive = 1', [req.body.username]);
                 if (users[0] && users[0].password === req.body.password) {
-                    delete users[0].password;
-                    res.json({ status: 'success', user: users[0] });
-                } else res.status(401).json({ error: 'Invalid' });
+                    const u = { ...users[0] };
+                    delete u.password;
+                    res.json({ status: 'success', user: u });
+                } else res.status(401).json({ error: 'Invalid credentials' });
                 break;
             case 'get_candidates':
-                const [c] = await pool.execute('SELECT * FROM candidates ORDER BY createdAt DESC');
-                res.json(c.map(r => ({
+                const [candidates] = await pool.execute('SELECT * FROM candidates ORDER BY createdAt DESC');
+                res.json(candidates.map(r => ({
                     ...r, 
                     personalDetails: JSON.parse(r.personalDetails),
                     contactDetails: JSON.parse(r.contactDetails),
@@ -129,26 +141,33 @@ api.post('/', async (req, res) => {
             default: res.status(400).json({ error: 'Unknown action' });
         }
     } catch (e) {
-        console.error(e);
+        console.error("API POST Error:", e.message);
         res.status(500).json({ error: e.message });
     }
 });
 
 app.use('/admission-api', api);
 
-// 3. Static Files
+// 3. Static Files & Routing
 const buildPath = path.join(__dirname, 'build');
+
+// Explicitly serve installer.html first so it doesn't get caught by the SPA catch-all
+app.get('/installer.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'installer.html'));
+});
+
 if (fs.existsSync(buildPath)) {
     app.use(express.static(buildPath));
     app.get('*', (req, res) => {
+        // Don't intercept API routes
         if (req.url.startsWith('/admission-api')) return res.status(404).end();
         res.sendFile(path.join(buildPath, 'index.html'));
     });
 } else {
-    app.get('/', (req, res) => res.send('API Online. build/ folder missing. Please run build.'));
+    app.get('/', (req, res) => res.send('Backend API is running. Build folder missing. Please run "npm run build".'));
 }
 
 app.listen(port, '0.0.0.0', async () => {
-    console.log(`>> Server listening on port ${port}`);
+    console.log(`>> Server online on port ${port}`);
     await initDbPool();
 });
