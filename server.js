@@ -151,15 +151,15 @@ app.use('/admission-api', api);
 // 3. Static Files & Routing
 const buildPath = path.join(__dirname, 'build');
 
-// Explicitly serve installer.html first so it doesn't get caught by the SPA catch-all
-app.get('/installer.html', (req, res) => {
-    res.sendFile(path.join(__dirname, 'installer.html'));
-});
-
 if (fs.existsSync(buildPath)) {
     app.use(express.static(buildPath));
+    
+    // Explicit route for installer
+    app.get('/installer.html', (req, res) => {
+        res.sendFile(path.join(buildPath, 'installer.html'));
+    });
+
     app.get('*', (req, res) => {
-        // Don't intercept API routes
         if (req.url.startsWith('/admission-api')) return res.status(404).end();
         res.sendFile(path.join(buildPath, 'index.html'));
     });
