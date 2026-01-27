@@ -17,14 +17,13 @@ const Installer: React.FC = () => {
     adminPass: ''
   });
 
-  // Use a relative path that works regardless of base URL
+  // Strict API path
   const API_URL = '/admission-api';
 
   const testConnection = async () => {
     setDbStatus('testing');
     setError('');
     try {
-      console.log("Testing connection to:", API_URL);
       const res = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -38,7 +37,7 @@ const Installer: React.FC = () => {
       });
       
       if (!res.ok) {
-        throw new Error(`Server returned ${res.status}: ${res.statusText}`);
+        throw new Error(`Connection Error: Server returned ${res.status} (${res.statusText})`);
       }
 
       const data = await res.json();
@@ -46,11 +45,11 @@ const Installer: React.FC = () => {
         setDbStatus('success');
       } else {
         setDbStatus('failed');
-        setError(data.error || 'Connection failed');
+        setError(data.error || 'The database credentials seem incorrect.');
       }
     } catch (e: any) {
       setDbStatus('failed');
-      setError(`Setup API Error: ${e.message}. Check if your Node.js app is running.`);
+      setError(`Network Error: ${e.message}. Tip: Check if Node.js app is started in Hostinger dashboard.`);
     }
   };
 
@@ -64,18 +63,16 @@ const Installer: React.FC = () => {
         body: JSON.stringify({ action: 'perform_install', ...config })
       });
       
-      if (!res.ok) {
-        throw new Error(`Installation failed with status ${res.status}`);
-      }
+      if (!res.ok) throw new Error(`Installation failed (${res.status})`);
 
       const data = await res.json();
       if (data.status === 'success') {
         setStep(4);
       } else {
-        setError(data.error || 'Installation failed');
+        setError(data.error || 'Failed to initialize database tables.');
       }
     } catch (e: any) {
-      setError(`Installation request failed: ${e.message}`);
+      setError(`Request Failed: ${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -108,7 +105,7 @@ const Installer: React.FC = () => {
             <div className="mb-6 p-4 bg-rose-50 border border-rose-100 text-rose-600 rounded-2xl text-sm flex gap-3 items-center">
               <i className="fa-solid fa-circle-exclamation text-lg"></i>
               <div className="flex-1">
-                <p className="font-bold">Error Detected</p>
+                <p className="font-bold">Setup Issue</p>
                 <p className="opacity-80">{error}</p>
               </div>
             </div>
@@ -119,11 +116,11 @@ const Installer: React.FC = () => {
               <div className="text-center py-4">
                 <i className="fa-solid fa-database text-5xl text-slate-200 mb-4"></i>
                 <h3 className="text-lg font-bold text-slate-800">Database Configuration</h3>
-                <p className="text-slate-500 text-sm">Enter your MySQL credentials from Hostinger.</p>
+                <p className="text-slate-500 text-sm">Enter the credentials from your Hostinger MySQL Database.</p>
               </div>
               
               <div className="grid grid-cols-1 gap-4">
-                <Input label="DB Host (usually localhost)" value={config.dbHost} onChange={v => setConfig({...config, dbHost: v})} />
+                <Input label="Host (usually localhost)" value={config.dbHost} onChange={v => setConfig({...config, dbHost: v})} />
                 <div className="grid grid-cols-2 gap-4">
                   <Input label="DB Username" value={config.dbUser} onChange={v => setConfig({...config, dbUser: v})} />
                   <Input label="DB Password" type="password" value={config.dbPass} onChange={v => setConfig({...config, dbPass: v})} />
@@ -185,7 +182,7 @@ const Installer: React.FC = () => {
                 <i className="fa-solid fa-check-double"></i>
               </div>
               <h2 className="text-2xl font-black text-slate-900 mb-2">Setup Complete!</h2>
-              <p className="text-slate-500 mb-8 px-4">The database has been initialized. You can now log in to the system.</p>
+              <p className="text-slate-500 mb-8 px-4">Database tables created. You can now start using the CRM.</p>
               <a 
                 href="/" 
                 className="inline-block bg-slate-900 text-white px-10 py-4 rounded-2xl font-bold hover:bg-slate-800 transition-all shadow-xl"
@@ -205,7 +202,7 @@ const Input: React.FC<{ label: string, value: string, onChange: (v: string) => v
     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">{label}</label>
     <input 
       type={type}
-      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all dark:bg-slate-900 dark:text-white"
+      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all"
       value={value}
       onChange={e => onChange(e.target.value)}
     />

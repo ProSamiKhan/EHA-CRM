@@ -1,11 +1,16 @@
 
-# Standard Hostinger Node.js configuration
-# Node Selector usually handles routing, so we only need basics here.
-Options -MultiViews
+# Ensure Node.js handles the API
 RewriteEngine On
+RewriteBase /
 
-# Ensure the app handles all routing including SPA fallbacks
-# API requests should pass through to server.js
-# Static files should be served normally
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteRule ^ index.html [QSA,L]
+# 1. Skip rewrite for the API path
+RewriteCond %{REQUEST_URI} ^/admission-api [NC]
+RewriteRule .* - [L]
+
+# 2. Skip rewrite for existing files/folders (images, js, css, installer.html)
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# 3. SPA routing: Send everything else to index.html
+RewriteRule ^ index.html [L]
