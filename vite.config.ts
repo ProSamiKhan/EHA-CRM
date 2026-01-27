@@ -1,10 +1,9 @@
-
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { resolve, dirname } from 'path';
+import { resolve } from 'path';
 import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 
-// Fix: Manually define __dirname because it is not available in ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -14,20 +13,21 @@ export default defineConfig({
   build: {
     outDir: 'build',
     emptyOutDir: true,
-    sourcemap: false, // Save RAM
+    sourcemap: false,
     minify: 'esbuild',
-    chunkSizeWarningLimit: 500,
     rollupOptions: {
       input: {
-        // Fix: Use the defined __dirname to resolve entry point paths
         main: resolve(__dirname, 'index.html'),
-        installer: resolve(__dirname, 'installer.html'),
-      },
-      output: {
-        manualChunks: {
-          'vendor': ['react', 'react-dom', 'recharts'],
-        }
       }
     },
-  }
+  },
+  server: {
+    port: 5173,
+    strictPort: true,
+  },
+  resolve: {
+    alias: {
+      '@': resolve(__dirname, './'),
+    },
+  },
 });
