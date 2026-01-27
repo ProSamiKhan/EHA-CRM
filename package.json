@@ -1,8 +1,8 @@
 
 {
   "name": "english-house-academy-crm",
-  "version": "1.1.5",
-  "description": "Full Stack Admission CRM",
+  "version": "1.2.0",
+  "description": "Full Stack Production CRM",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {

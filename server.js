@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-const { exec } = require('child_process');
+const mysql = require('mysql2/promise');
 require('dotenv').config();
 
 const app = express();
@@ -13,34 +13,100 @@ const buildPath = path.resolve(__dirname, 'build');
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// 1. API STATUS & BUILD TRIGGER
-app.get('/api-status', (req, res) => {
-    res.json({ 
-        status: 'active', 
-        build_folder_exists: fs.existsSync(buildPath),
-        time: new Date().toISOString()
-    });
+// Database Connection Pool
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 });
 
-app.get('/trigger-build', (req, res) => {
-    console.log("Starting build process...");
-    // Increased buffer for large Vite builds
-    exec("npx vite build", { maxBuffer: 1024 * 1024 * 20 }, (error, stdout, stderr) => {
-        if (error) {
-            console.error(`Build Error: ${error.message}`);
-            return res.status(500).json({ status: 'error', error: error.message });
-        }
-        res.json({ status: 'success', message: 'Build completed successfully' });
-    });
+// 1. API STATUS
+app.get('/api-status', async (req, res) => {
+    try {
+        await pool.query('SELECT 1');
+        res.json({ 
+            status: 'active', 
+            database: 'connected',
+            time: new Date().toISOString()
+        });
+    } catch (err) {
+        res.status(500).json({ status: 'error', database: 'disconnected', error: err.message });
+    }
 });
 
-// 2. MOCK API (To keep frontend working without DB config initially)
-app.post('/api-v1', (req, res) => {
+// 2. MAIN API ENDPOINT
+app.post('/api-v1', async (req, res) => {
     const { action } = req.body;
-    res.json({ status: 'mock_active', action_received: action });
+
+    try {
+        switch (action) {
+            case 'login':
+                const [users] = await pool.query('SELECT id, username, name, role, isActive, password FROM users WHERE username = ? AND isActive = 1', [req.body.username]);
+                const user = users[0];
+                if (user && user.password === req.body.password) {
+                    delete user.password;
+                    return res.json({ status: 'success', user });
+                }
+                return res.status(401).json({ error: 'Invalid credentials' });
+
+            case 'get_candidates':
+                const [candidates] = await pool.query('SELECT * FROM candidates ORDER BY createdAt DESC');
+                const formatted = candidates.map(c => ({
+                    ...c,
+                    personalDetails: typeof c.personalDetails === 'string' ? JSON.parse(c.personalDetails) : c.personalDetails,
+                    contactDetails: typeof c.contactDetails === 'string' ? JSON.parse(c.contactDetails) : c.contactDetails,
+                    addressDetails: typeof c.addressDetails === 'string' ? JSON.parse(c.addressDetails) : c.addressDetails,
+                    travelDetails: typeof c.travelDetails === 'string' ? JSON.parse(c.travelDetails) : c.travelDetails,
+                    paymentHistory: typeof c.paymentHistory === 'string' ? JSON.parse(c.paymentHistory) : c.paymentHistory
+                }));
+                return res.json(formatted);
+
+            case 'save_candidate':
+                const c = req.body.candidate;
+                const query = `
+                    INSERT INTO candidates (id, batchId, executiveId, status, paymentStatus, personalDetails, contactDetails, addressDetails, travelDetails, paymentHistory, createdAt, updatedAt)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE 
+                    batchId=VALUES(batchId), status=VALUES(status), paymentStatus=VALUES(paymentStatus),
+                    personalDetails=VALUES(personalDetails), contactDetails=VALUES(contactDetails),
+                    addressDetails=VALUES(addressDetails), travelDetails=VALUES(travelDetails),
+                    paymentHistory=VALUES(paymentHistory), updatedAt=VALUES(updatedAt)
+                `;
+                await pool.query(query, [
+                    c.id, c.batchId, c.executiveId, c.status, c.paymentStatus,
+                    JSON.stringify(c.personalDetails), JSON.stringify(c.contactDetails),
+                    JSON.stringify(c.addressDetails), JSON.stringify(c.travelDetails),
+                    JSON.stringify(c.paymentHistory), c.createdAt || Date.now(), Date.now()
+                ]);
+                return res.json({ status: 'success' });
+
+            case 'get_batches':
+                const [batches] = await pool.query('SELECT * FROM batches');
+                return res.json(batches);
+
+            case 'save_batch':
+                const b = req.body.batch;
+                await pool.query('REPLACE INTO batches (id, name, maxSeats, createdAt) VALUES (?, ?, ?, ?)', [b.id, b.name, b.maxSeats, b.createdAt]);
+                return res.json({ status: 'success' });
+
+            case 'get_users':
+                const [allUsers] = await pool.query('SELECT id, username, name, role, isActive FROM users');
+                return res.json(allUsers);
+
+            default:
+                return res.status(400).json({ error: 'Unknown action' });
+        }
+    } catch (err) {
+        console.error("API Error:", err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
-// 3. STATIC FILES
+// 3. STATIC FILES (React Build)
 if (fs.existsSync(buildPath)) {
     app.use(express.static(buildPath));
 }
@@ -51,55 +117,7 @@ app.get('*', (req, res) => {
     if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
     } else {
-        // Render a setup page if build is missing
-        res.status(200).send(`
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8"><title>CRM Initializing</title>
-                <script src="https://cdn.tailwindcss.com"></script>
-            </head>
-            <body class="bg-slate-50 min-h-screen flex items-center justify-center p-6 text-center">
-                <div class="max-w-md w-full bg-white p-10 rounded-[2.5rem] shadow-xl border border-slate-100">
-                    <div class="w-20 h-20 bg-indigo-600 rounded-3xl flex items-center justify-center text-white mx-auto mb-6 shadow-lg shadow-indigo-100">
-                        <i class="fa-solid fa-rocket text-3xl"></i>
-                    </div>
-                    <h1 class="text-2xl font-black text-slate-900 mb-2">Welcome to EHA CRM</h1>
-                    <p class="text-slate-500 text-sm mb-8 leading-relaxed">The system needs a one-time compilation to optimize performance for your server.</p>
-                    <button id="buildBtn" onclick="runBuild()" class="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold hover:scale-[1.02] transition-all">Compile System Now</button>
-                    <p id="log" class="mt-4 text-[10px] font-mono text-slate-400"></p>
-                </div>
-                <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
-                <script>
-                    function runBuild() {
-                        const btn = document.getElementById('buildBtn');
-                        const log = document.getElementById('log');
-                        btn.disabled = true;
-                        btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin mr-2"></i> Compiling...';
-                        log.innerText = 'Initializing Vite...';
-                        
-                        fetch('/trigger-build')
-                            .then(r => r.json())
-                            .then(data => {
-                                if(data.status === 'success') {
-                                    log.innerText = 'Success! Reloading...';
-                                    setTimeout(() => window.location.reload(), 1500);
-                                } else {
-                                    log.innerText = 'Error: ' + data.error;
-                                    btn.disabled = false;
-                                    btn.innerText = 'Retry Compilation';
-                                }
-                            })
-                            .catch(err => {
-                                log.innerText = 'Network Error. Check console.';
-                                btn.disabled = false;
-                                btn.innerText = 'Retry';
-                            });
-                    }
-                </script>
-            </body>
-            </html>
-        `);
+        res.status(404).send("Build not found. Please run 'npm run build' first.");
     }
 });
 
