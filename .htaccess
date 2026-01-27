@@ -1,16 +1,14 @@
 
-# CRM HTACCESS - PRODUCTION
 RewriteEngine On
 RewriteBase /
 
-# IMPORTANT: Do not rewrite requests for the API
-RewriteCond %{REQUEST_URI} ^/admission-api [NC]
-RewriteRule .* - [L]
+# Force API calls directly to Node.js
+RewriteRule ^(_api_)($|/) - [L]
 
-# Normal file handling
+# If file exists, serve it
 RewriteCond %{REQUEST_FILENAME} -f [OR]
 RewriteCond %{REQUEST_FILENAME} -d
 RewriteRule ^ - [L]
 
-# SPA Fallback
+# Otherwise, hand over to index.html (SPA)
 RewriteRule ^ index.html [L]

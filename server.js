@@ -9,13 +9,13 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-console.log('--- CRM BACKEND INITIALIZING ---');
+console.log('--- CRM BACKEND STARTING ---');
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// 1. Database Management
+// 1. Database Connection Logic
 let pool = null;
 let isConfigured = false;
 
@@ -35,27 +35,24 @@ async function initDbPool() {
         const [rows] = await conn.execute('SHOW TABLES LIKE "users"');
         conn.release();
         isConfigured = rows.length > 0;
-        console.log(">> [DB] Connected successfully.");
         return true;
     } catch (e) {
-        console.error("!! [DB] Error:", e.message);
         return false;
     }
 }
 
-// 2. API Routes - DEFINED EXPLICITLY TO AVOID 404
-// This handles both /admission-api and /admission-api/
+// 2. CRITICAL: API Handler (Must be at the top)
 const apiHandler = async (req, res) => {
+    // Health Check
     if (req.method === 'GET') {
-        return res.json({ status: 'online', db: isConfigured, timestamp: Date.now() });
+        return res.json({ status: 'online', configured: isConfigured });
     }
 
-    if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
-
     const { action } = req.body;
-    console.log(`>> [API] Action: ${action}`);
+    if (!action) return res.status(400).json({ error: 'No action provided' });
 
     try {
+        // Installation Routes
         if (action === 'test_db_connection') {
             const { host, user, pass, name } = req.body;
             const test = await mysql.createConnection({ host, user, password: pass, database: name });
@@ -76,16 +73,17 @@ const apiHandler = async (req, res) => {
                 ['admin-init', adminUser, adminPass, 'Super Admin', 'SUPER_ADMIN', 1]);
             conn.release();
             await testPool.end();
-            
             isConfigured = true;
             await initDbPool();
             return res.json({ status: 'success' });
         }
 
+        // Check if DB is ready for other actions
         if (!isConfigured || !pool) {
-            return res.status(503).json({ error: 'Database not initialized.' });
+            return res.status(503).json({ error: 'Database not set up' });
         }
 
+        // Main API Switch
         switch (action) {
             case 'login':
                 const [users] = await pool.execute('SELECT * FROM users WHERE username = ? AND isActive = 1', [req.body.username]);
@@ -94,7 +92,7 @@ const apiHandler = async (req, res) => {
                     delete u.password;
                     return res.json({ status: 'success', user: u });
                 }
-                return res.status(401).json({ error: 'Invalid credentials' });
+                return res.status(401).json({ error: 'Invalid login' });
             
             case 'get_candidates':
                 const [candidates] = await pool.execute('SELECT * FROM candidates ORDER BY createdAt DESC');
@@ -123,7 +121,14 @@ const apiHandler = async (req, res) => {
 
             case 'save_batch':
                 const b = req.body.batch;
-                await pool.execute('REPLACE INTO batches (id, name, maxSeats, createdAt) VALUES (?, ?, ?, ?)', [b.id, b.name, b.maxSeats, b.createdAt]);
+                await pool.execute(
+                    'INSERT INTO batches (id, name, maxSeats, createdAt) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE name=VALUES(name), maxSeats=VALUES(maxSeats)',
+                    [b.id, b.name, b.maxSeats, b.createdAt || Date.now()]
+                );
+                return res.json({ status: 'success' });
+
+            case 'delete_batch':
+                await pool.execute('DELETE FROM batches WHERE id = ?', [req.body.id]);
                 return res.json({ status: 'success' });
 
             case 'get_users':
@@ -132,43 +137,57 @@ const apiHandler = async (req, res) => {
 
             case 'save_user':
                 const u = req.body.user;
-                if (req.body.password) await pool.execute('REPLACE INTO users (id, username, name, role, isActive, password) VALUES (?, ?, ?, ?, ?, ?)', [u.id, u.username, u.name, u.role, u.isActive?1:0, req.body.password]);
-                else await pool.execute('UPDATE users SET name=?, role=?, isActive=? WHERE id=?', [u.name, u.role, u.isActive?1:0, u.id]);
+                const p = req.body.password;
+                if (p) {
+                    await pool.execute(
+                        'INSERT INTO users (id, username, password, name, role, isActive) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE username=VALUES(username), password=VALUES(password), name=VALUES(name), role=VALUES(role), isActive=VALUES(isActive)',
+                        [u.id, u.username, p, u.name, u.role, u.isActive ? 1 : 0]
+                    );
+                } else {
+                    await pool.execute(
+                        'INSERT INTO users (id, username, name, role, isActive) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE username=VALUES(username), name=VALUES(name), role=VALUES(role), isActive=VALUES(isActive)',
+                        [u.id, u.username, u.name, u.role, u.isActive ? 1 : 0]
+                    );
+                }
                 return res.json({ status: 'success' });
 
-            case 'delete_user': await pool.execute('DELETE FROM users WHERE id=?', [req.body.id]); return res.json({status:'success'});
-            case 'delete_batch': await pool.execute('DELETE FROM batches WHERE id=?', [req.body.id]); return res.json({status:'success'});
-            
+            case 'delete_user':
+                await pool.execute('DELETE FROM users WHERE id = ?', [req.body.id]);
+                return res.json({ status: 'success' });
+
+            case 'get_audit_logs':
+                try {
+                    const [logs] = await pool.execute('SELECT * FROM audit_logs ORDER BY timestamp DESC');
+                    return res.json(logs);
+                } catch (e) {
+                    // Fallback if table doesn't exist yet
+                    return res.json([]);
+                }
+
             default: 
-                return res.status(400).json({ error: 'Unknown action' });
+                return res.status(404).json({ error: 'Action not found' });
         }
     } catch (e) {
-        console.error(`!! [API] Error:`, e.message);
         return res.status(500).json({ error: e.message });
     }
 };
 
-// Listen on both with and without trailing slash
-app.all('/admission-api', apiHandler);
-app.all('/admission-api/', apiHandler);
+// Use a very simple, non-conflicting path
+app.all('/_api_', apiHandler);
+app.all('/_api_/*', apiHandler);
 
-// 3. Static Files Serving
+// 3. Static Files
 const buildPath = path.join(__dirname, 'build');
 if (fs.existsSync(buildPath)) {
     app.use(express.static(buildPath));
-    
-    app.get('/installer.html', (req, res) => {
-        res.sendFile(path.join(buildPath, 'installer.html'));
-    });
-
+    app.get('/installer.html', (req, res) => res.sendFile(path.join(buildPath, 'installer.html')));
     app.get('*', (req, res) => {
-        // Only serve index.html if it's not an API call
-        if (req.url.startsWith('/admission-api')) return;
+        if (req.url.startsWith('/_api_')) return;
         res.sendFile(path.join(buildPath, 'index.html'));
     });
 }
 
 app.listen(port, '0.0.0.0', async () => {
-    console.log(`>> [SERVER] Running on port ${port}`);
+    console.log(`>> Server awake on port ${port}`);
     await initDbPool();
 });

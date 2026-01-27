@@ -8,64 +8,31 @@ export class AuthService {
 
     if (StorageService.isDemoMode()) {
       if (username === 'admin' && password === 'admin123') {
-        const demoUser: User = { 
-          id: 'demo-admin', 
-          username: 'admin', 
-          name: 'Demo Administrator', 
-          role: UserRole.SUPER_ADMIN, 
-          isActive: true 
-        };
-        localStorage.setItem('crm_session', JSON.stringify(demoUser));
-        return demoUser;
+        const user = { id: 'demo', username: 'admin', name: 'Demo Admin', role: UserRole.SUPER_ADMIN, isActive: true };
+        localStorage.setItem('crm_session', JSON.stringify(user));
+        return user;
       }
-      throw new Error("Invalid credentials for Demo Mode (Try admin / admin123)");
+      throw new Error("Invalid demo credentials");
     }
 
-    try {
-      // Use absolute path for robustness
-      const response = await fetch('/admission-api', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'login', username, password })
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.status === 'success' && data.user) {
-          localStorage.setItem('crm_session', JSON.stringify(data.user));
-          return data.user;
-        }
-      } else {
-        if (response.status === 401) throw new Error("Incorrect username or password");
-        if (response.status === 404) throw new Error("API Route not found (404). Contact Administrator.");
-        throw new Error(`Server Error (${response.status})`);
+    const response = await fetch('/_api_', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'login', username, password })
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.status === 'success') {
+        localStorage.setItem('crm_session', JSON.stringify(data.user));
+        return data.user;
       }
-      
-      return null;
-    } catch (e: any) {
-      console.error("Login Exception:", e.message);
-      // Emergency fallback for first setup if server is being flaky
-      if (username === 'admin' && password === 'admin123') {
-          console.warn("Emergency Demo Login used.");
-          const fallbackUser: User = { id: 'emergency', username: 'admin', name: 'System Admin (Safe Mode)', role: UserRole.SUPER_ADMIN, isActive: true };
-          localStorage.setItem('crm_session', JSON.stringify(fallbackUser));
-          return fallbackUser;
-      }
-      throw e;
     }
+    throw new Error("Invalid credentials");
   }
 
-  static logout() {
-    localStorage.removeItem('crm_session');
-  }
-
+  static logout() { localStorage.removeItem('crm_session'); }
   static getCurrentUser(): User | null {
-    try {
-      const session = localStorage.getItem('crm_session');
-      if (!session) return null;
-      return JSON.parse(session);
-    } catch (e) {
-      return null;
-    }
+    try { return JSON.parse(localStorage.getItem('crm_session') || 'null'); } catch { return null; }
   }
 }
