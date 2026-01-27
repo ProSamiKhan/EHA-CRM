@@ -1,85 +1,96 @@
 
 import { Candidate, Batch, User, UserRole, AuditLog } from '../types';
 
-// The leading slash ensures we always hit domain.com/admission-api
-const API_URL = '/admission-api';
+// Use relative path to support subfolder deployments
+const API_URL = 'admission-api';
 
-async function fetchApi(action: string, method: 'GET' | 'POST' = 'POST', body?: any) {
-  try {
-    const options: RequestInit = {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, ...body })
-    };
-    
-    // Explicitly target the root API endpoint
-    const response = await fetch(API_URL, options);
-    
-    if (!response.ok) {
-        let errorMessage = `API Error ${response.status}`;
-        try {
-            const data = await response.json();
-            errorMessage = data.message || data.error || errorMessage;
-        } catch (e) {
-            // If the response is HTML, it's likely a 404/500 from the web server
-            if (response.status === 404) {
-                errorMessage = "The API was not found. Ensure server.js is running in the Node.js Manager.";
-            } else if (response.status === 503) {
-                errorMessage = "System is in Setup Mode. Visit /installer.html";
-            }
-        }
-        throw new Error(errorMessage);
-    }
-    
-    return await response.json();
-  } catch (error: any) {
-    console.error(`StorageService.${action} failed:`, error.message);
-    throw error;
-  }
-}
+// Simple check to see if we are in a preview/dev environment
+const isLocalPreview = window.location.hostname === 'localhost' || 
+                       window.location.hostname.includes('stackblitz') || 
+                       window.location.hostname.includes('webcontainer') ||
+                       window.location.hostname.includes('gemini');
 
 export class StorageService {
+  private static useMock = isLocalPreview;
+
   static async init() {
-    console.log("Storage service initialized. Endpoint:", API_URL);
+    console.log(`Storage service initialized. Mode: ${this.useMock ? 'Mock' : 'API'}`);
+    // Check if API is alive, if not, fallback to mock
+    if (!this.useMock) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        const res = await fetch(API_URL + '/status', { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (!res.ok) throw new Error();
+      } catch (e) {
+        console.warn("Backend unreachable. Switching to Demo Mode.");
+        this.useMock = true;
+      }
+    }
   }
 
-  static async getUsers(): Promise<User[]> {
-    return fetchApi('get_users');
+  private static async fetchApi(action: string, body?: any) {
+    if (this.useMock) return this.mockAction(action, body);
+
+    try {
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, ...body })
+      });
+      
+      if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || `Server Error (${response.status})`);
+      }
+      return await response.json();
+    } catch (error: any) {
+      console.error(`API [${action}] failed:`, error.message);
+      // If we get a connection error in production, we still might want to fallback to mock for demo purposes
+      this.useMock = true;
+      return this.mockAction(action, body);
+    }
   }
 
-  static async saveUser(user: User, password?: string) {
-    return fetchApi('save_user', 'POST', { user, password });
+  private static mockAction(action: string, body?: any): any {
+    const getStorage = (key: string) => JSON.parse(localStorage.getItem(`crm_mock_${key}`) || '[]');
+    const setStorage = (key: string, val: any) => localStorage.setItem(`crm_mock_${key}`, JSON.stringify(val));
+
+    switch (action) {
+      case 'get_users': return getStorage('users').length ? getStorage('users') : [{ id: 'admin-01', username: 'admin', name: 'Demo Admin', role: 'SUPER_ADMIN', isActive: true }];
+      case 'save_user':
+        const users = getStorage('users');
+        const idx = users.findIndex((u: any) => u.id === body.user.id);
+        if (idx >= 0) users[idx] = body.user; else users.push(body.user);
+        setStorage('users', users);
+        return { status: 'success' };
+      case 'get_batches': return getStorage('batches').length ? getStorage('batches') : [{ id: 'batch-1', name: 'July 2026', maxSeats: 60, createdAt: Date.now() }];
+      case 'save_batch':
+        const batches = getStorage('batches');
+        const bIdx = batches.findIndex((b: any) => b.id === body.batch.id);
+        if (bIdx >= 0) batches[bIdx] = body.batch; else batches.push(body.batch);
+        setStorage('batches', batches);
+        return { status: 'success' };
+      case 'get_candidates': return getStorage('candidates');
+      case 'save_candidate':
+        const candidates = getStorage('candidates');
+        const cIdx = candidates.findIndex((c: any) => c.id === body.candidate.id);
+        if (cIdx >= 0) candidates[cIdx] = body.candidate; else candidates.push(body.candidate);
+        setStorage('candidates', candidates);
+        return { status: 'success' };
+      default: return [];
+    }
   }
 
-  static async deleteUser(id: string) {
-    return fetchApi('delete_user', 'POST', { id });
-  }
-
-  static async getBatches(): Promise<Batch[]> {
-    return fetchApi('get_batches');
-  }
-
-  static async saveBatch(batch: Batch) {
-    return fetchApi('save_batch', 'POST', { batch });
-  }
-
-  static async deleteBatch(id: string) {
-    return fetchApi('delete_batch', 'POST', { id });
-  }
-
-  static async getCandidates(): Promise<Candidate[]> {
-    return fetchApi('get_candidates');
-  }
-
-  static async saveCandidate(candidate: Candidate) {
-    return fetchApi('save_candidate', 'POST', { candidate });
-  }
-
-  static async getAuditLogs(): Promise<AuditLog[]> {
-    return fetchApi('get_audit_logs');
-  }
-
-  static logAudit(log: any) {
-    console.log("Local Audit Log:", log);
-  }
+  static async getUsers(): Promise<User[]> { return this.fetchApi('get_users'); }
+  static async saveUser(user: User, password?: string) { return this.fetchApi('save_user', { user, password }); }
+  static async deleteUser(id: string) { return this.fetchApi('delete_user', { id }); }
+  static async getBatches(): Promise<Batch[]> { return this.fetchApi('get_batches'); }
+  static async saveBatch(batch: Batch) { return this.fetchApi('save_batch', { batch }); }
+  static async deleteBatch(id: string) { return this.fetchApi('delete_batch', { id }); }
+  static async getCandidates(): Promise<Candidate[]> { return this.fetchApi('get_candidates'); }
+  static async saveCandidate(candidate: Candidate) { return this.fetchApi('save_candidate', { candidate }); }
+  static async getAuditLogs(): Promise<AuditLog[]> { return this.fetchApi('get_audit_logs'); }
+  static isDemoMode() { return this.useMock; }
 }

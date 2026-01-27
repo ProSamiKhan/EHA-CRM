@@ -7,13 +7,10 @@ const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
-// Hostinger uses dynamic ports. We MUST fallback to 3000 if not provided.
 const port = process.env.PORT || 3000;
 
 console.log('--- SYSTEM STARTUP ---');
-console.log('Node Version:', process.version);
 console.log('Environment Port:', process.env.PORT);
-console.log('Working Directory:', __dirname);
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -25,10 +22,7 @@ let isConfigured = false;
 
 async function initDbPool() {
     const { DB_HOST, DB_USER, DB_PASSWORD, DB_NAME } = process.env;
-    if (!DB_NAME || !DB_USER) {
-        console.log("DB configuration missing. System in Setup Mode.");
-        return false;
-    }
+    if (!DB_NAME || !DB_USER) return false;
     try {
         pool = mysql.createPool({
             host: DB_HOST || 'localhost',
@@ -43,7 +37,7 @@ async function initDbPool() {
         const [rows] = await conn.execute('SHOW TABLES LIKE "users"');
         conn.release();
         isConfigured = rows.length > 0;
-        console.log("Database initialized successfully.");
+        console.log("Database initialized.");
         return true;
     } catch (e) {
         console.error("Database initialization failed:", e.message);
@@ -51,20 +45,17 @@ async function initDbPool() {
     }
 }
 
-// Explicit health check endpoint
-app.get('/admission-api/status', (req, res) => {
-    res.json({ status: 'online', configured: isConfigured, time: new Date().toISOString() });
+// Health check
+app.get(['/admission-api/status', '/status'], (req, res) => {
+    res.json({ status: 'online', configured: isConfigured });
 });
 
-// Primary API Router
-app.post('/admission-api', async (req, res) => {
+// API Handler with flexible routing
+const apiHandler = async (req, res) => {
     const { action } = req.body;
-    console.log(`API Request: ${action}`);
-
     if (!action) return res.status(400).json({ error: 'Action required' });
 
     try {
-        // Installation logic (No configuration required)
         if (action === 'test_db_connection') {
             const { host, user, pass, name } = req.body;
             const testConn = await mysql.createConnection({ host, user, password: pass, database: name });
@@ -100,7 +91,6 @@ app.post('/admission-api', async (req, res) => {
             return res.json({ status: 'success' });
         }
 
-        // Standard CRM Logic
         if (!isConfigured || !pool) return res.status(503).json({ error: 'System not configured' });
 
         switch (action) {
@@ -180,10 +170,12 @@ app.post('/admission-api', async (req, res) => {
                 res.status(400).json({ error: `Action '${action}' not supported` });
         }
     } catch (err) {
-        console.error("API Processing Error:", err.message);
-        res.status(500).json({ error: 'Internal Server Error', message: err.message });
+        res.status(500).json({ error: 'Server error', message: err.message });
     }
-});
+};
+
+// Map both /admission-api and admission-api
+app.post(['/admission-api', '/admission-api/'], apiHandler);
 
 // Static Serving
 const distPath = path.join(__dirname, 'dist');
@@ -193,19 +185,16 @@ app.get('/installer.tsx', (req, res) => res.sendFile(path.join(__dirname, 'insta
 if (fs.existsSync(distPath)) {
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
-        if (req.path.startsWith('/admission-api')) return;
-        if (!isConfigured && !req.path.includes('installer')) return res.redirect('/installer.html');
+        if (req.path.includes('admission-api')) return;
         res.sendFile(path.join(distPath, 'index.html'));
     });
 } else {
     app.get('/', (req, res) => {
-        if (!isConfigured) return res.redirect('/installer.html');
-        res.status(200).send('Backend is active. Front-end build is missing (npm run build).');
+        res.status(200).send('Backend Active. Build dist/ folder to see UI.');
     });
 }
 
-// Start on 0.0.0.0 for external availability
 app.listen(port, '0.0.0.0', async () => {
-    console.log(`Server started on 0.0.0.0:${port}`);
+    console.log(`Server started on port ${port}`);
     await initDbPool();
 });
