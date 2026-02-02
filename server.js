@@ -7,7 +7,8 @@ require('dotenv').config();
 
 const app = express();
 const port = process.env.PORT || 3000;
-const buildPath = path.resolve(__dirname, 'build');
+// Vercel uses 'dist' by default for Vite projects
+const buildPath = path.resolve(__dirname, 'dist');
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -30,7 +31,8 @@ app.get('/api-status', async (req, res) => {
         res.json({ 
             status: 'active', 
             database: 'connected',
-            buildFound: fs.existsSync(buildPath)
+            buildFound: fs.existsSync(buildPath),
+            directory: buildPath
         });
     } catch (err) {
         res.status(500).json({ status: 'error', database: 'disconnected', error: err.message });
@@ -136,11 +138,18 @@ if (fs.existsSync(buildPath)) {
         res.sendFile(path.join(buildPath, 'index.html'));
     });
 } else {
-    app.get('*', (req, res) => {
-        res.status(500).send("Application 'build' directory not found. Please run 'npm run build' first.");
+    // If running on Vercel, the static files are handled by the 'rewrites' in vercel.json
+    // but for local testing or traditional servers, this fallback is useful.
+    app.get('/api-check', (req, res) => {
+        res.json({ message: "API is online, but static build directory was not found in this environment." });
     });
 }
 
-app.listen(port, () => {
-    console.log(`>> Server listening on port ${port}`);
-});
+// Export for Vercel Serverless Functions
+module.exports = app;
+
+if (require.main === module) {
+    app.listen(port, () => {
+        console.log(`>> Server listening on port ${port}`);
+    });
+}
