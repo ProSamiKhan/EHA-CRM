@@ -7,8 +7,6 @@ require('dotenv').config();
 
 const app = express();
 const port = process.env.PORT || 3000;
-
-// The folder where your 'npm run build' output goes
 const buildPath = path.resolve(__dirname, 'build');
 
 app.use(cors());
@@ -18,36 +16,28 @@ app.use(express.json({ limit: '50mb' }));
 const pool = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER,
-  password: process.env.DB_PASS,
+  password: process.env.DB_PASS || process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0
 });
 
-// API STATUS / Diagnostic Route
+// Diagnostic Route
 app.get('/api-status', async (req, res) => {
     try {
         await pool.query('SELECT 1');
-        const buildExists = fs.existsSync(buildPath);
-        const indexExists = fs.existsSync(path.join(buildPath, 'index.html'));
-        
         res.json({ 
             status: 'active', 
             database: 'connected',
-            environment: {
-                buildDir: buildPath,
-                buildFound: buildExists,
-                indexFound: indexExists,
-                cwd: process.cwd()
-            }
+            buildFound: fs.existsSync(buildPath)
         });
     } catch (err) {
-        res.status(500).json({ status: 'error', error: err.message });
+        res.status(500).json({ status: 'error', database: 'disconnected', error: err.message });
     }
 });
 
-// API ENDPOINT (v1)
+// API Endpoint
 app.post('/api-v1', async (req, res) => {
     const { action } = req.body;
     try {
@@ -132,38 +122,25 @@ app.post('/api-v1', async (req, res) => {
                 return res.json({ status: 'success' });
 
             default:
-                return res.json({ status: 'ok', message: 'Action active' });
+                return res.status(400).json({ error: 'Invalid action' });
         }
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// SERVE STATIC FILES FROM BUILD FOLDER
+// Production Static Serving
 if (fs.existsSync(buildPath)) {
-    // Priority 1: Serve actual files from the build directory
-    app.use(express.static(buildPath, { maxAge: '1d' }));
-    
-    // Priority 2: Serve index.html for any remaining non-API routes (SPA Routing)
+    app.use(express.static(buildPath));
     app.get('*', (req, res) => {
-        const indexFile = path.join(buildPath, 'index.html');
-        if (fs.existsSync(indexFile)) {
-            res.sendFile(indexFile);
-        } else {
-            res.status(404).send("Application built, but index.html is missing from the build folder.");
-        }
+        res.sendFile(path.join(buildPath, 'index.html'));
     });
 } else {
-    // Fallback: If build folder is missing, provide clear feedback
     app.get('*', (req, res) => {
-        res.status(404).send(`
-            <h1>Environment Error</h1>
-            <p>The <b>build</b> folder was not found at <code>${buildPath}</code>.</p>
-            <p>Please run <code>npm run build</code> and ensure the output is uploaded correctly.</p>
-        `);
+        res.status(500).send("Application 'build' directory not found. Please run 'npm run build' first.");
     });
 }
 
 app.listen(port, () => {
-    console.log(`>> CRM Server active on port ${port}`);
+    console.log(`>> Server listening on port ${port}`);
 });

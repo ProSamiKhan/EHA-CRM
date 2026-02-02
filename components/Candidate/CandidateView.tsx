@@ -1,9 +1,7 @@
-
 import React, { useState, useEffect } from 'react';
 import { Candidate, AdmissionStatus, PaymentStatus, UserRole, Batch } from '../../types';
 import { StorageService } from '../../services/storageService';
 import { AuthService } from '../../services/authService';
-import { AIService } from '../../services/aiService';
 import { TOTAL_FEES } from '../../constants';
 
 interface CandidateViewProps {
@@ -15,24 +13,10 @@ interface CandidateViewProps {
 export const CandidateView: React.FC<CandidateViewProps> = ({ candidate, onBack, onEdit }) => {
   const user = AuthService.getCurrentUser();
   const [batches, setBatches] = useState<Batch[]>([]);
-  const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   useEffect(() => {
     StorageService.getBatches().then(setBatches);
   }, []);
-
-  const handleAIAnalysis = async () => {
-    setIsAnalyzing(true);
-    try {
-      const result = await AIService.analyzeCandidate(candidate);
-      setAiAnalysis(result);
-    } catch (err: any) {
-      setAiAnalysis("Error: " + err.message);
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
 
   const batchName = batches.find(b => b.id === candidate.batchId)?.name || 'N/A';
   const totalPaid = candidate.paymentHistory.reduce((sum, p) => sum + p.amount, 0);
@@ -52,14 +36,6 @@ export const CandidateView: React.FC<CandidateViewProps> = ({ candidate, onBack,
           </div>
         </div>
         <div className="flex gap-3">
-          <button 
-            onClick={handleAIAnalysis}
-            disabled={isAnalyzing}
-            className="px-6 py-2.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-bold rounded-xl border border-indigo-100 dark:border-indigo-800/50 hover:bg-indigo-100 transition-all flex items-center gap-2 disabled:opacity-50"
-          >
-            {isAnalyzing ? <i className="fa-solid fa-sparkles animate-pulse"></i> : <i className="fa-solid fa-wand-magic-sparkles"></i>}
-            {isAnalyzing ? 'AI Thinking...' : 'Analyze with Gemini AI'}
-          </button>
           {!isViewOnly && (
             <button onClick={onEdit} className="px-6 py-2.5 bg-indigo-600 text-white font-bold rounded-xl shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all flex items-center gap-2">
               <i className="fa-solid fa-user-pen"></i>
@@ -68,19 +44,6 @@ export const CandidateView: React.FC<CandidateViewProps> = ({ candidate, onBack,
           )}
         </div>
       </div>
-
-      {aiAnalysis && (
-        <div className="mb-8 p-6 bg-gradient-to-r from-indigo-600 to-violet-700 rounded-3xl text-white shadow-xl animate-fadeIn relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
-            <i className="fa-solid fa-brain text-6xl"></i>
-          </div>
-          <h3 className="text-xs font-black uppercase tracking-[0.2em] mb-2 opacity-80 flex items-center gap-2">
-            <i className="fa-solid fa-sparkles"></i>
-            AI Intelligence Report
-          </h3>
-          <p className="text-sm leading-relaxed font-medium">{aiAnalysis}</p>
-        </div>
-      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="space-y-6">
